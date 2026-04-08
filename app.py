@@ -45,15 +45,21 @@ def process_data(df):
     today = pd.to_datetime('today').normalize()
     df['Days_Since'] = (today - df['RO-DATE-DT']).dt.days
     
-    # Handle potentially missing new columns gracefully
-    if 'ADVISOR' not in df.columns:
-        if 'ADVISOR NAME' in df.columns: df['ADVISOR'] = df['ADVISOR NAME']
-        elif 'ADVISOR-NAME' in df.columns: df['ADVISOR'] = df['ADVISOR-NAME']
-        else: df['ADVISOR'] = 'Unknown Advisor'
-        
+    # Handle potentially missing Email columns gracefully
     if 'EMAIL' not in df.columns:
         if 'EMAIL-ADDRESS' in df.columns: df['EMAIL'] = df['EMAIL-ADDRESS']
         else: df['EMAIL'] = 'No Email Provided'
+
+    # --- UPGRADED ADVISOR CLEANING LOGIC ---
+    if 'ADVISOR' not in df.columns:
+        if 'ADVISOR NAME' in df.columns: df['ADVISOR'] = df['ADVISOR NAME']
+        elif 'ADVISOR-NAME' in df.columns: df['ADVISOR'] = df['ADVISOR-NAME']
+        else: df['ADVISOR'] = 'Unknown'
+        
+    # Force names to be strings, strip hidden spaces, and make Title Case
+    df['ADVISOR'] = df['ADVISOR'].fillna('Unknown').astype(str).str.strip().str.title()
+    # Catch weird NaN strings
+    df['ADVISOR'] = df['ADVISOR'].replace({'Nan': 'Unknown', '': 'Unknown'})
     
     def assign_tier(amt):
         if amt >= 5000: return "Ultra-Ticket (>$5000)"
@@ -93,8 +99,9 @@ if uploaded_file:
     tier_filter = st.sidebar.selectbox("Dollar Tier", ["All", "Ultra-Ticket (>$5000)", "High-Ticket ($1000-$4999)", "Mid-Ticket ($300-$999)", "Low-Ticket (<$300)", "Unpriced / Zero"])
     category_filter = st.sidebar.selectbox("Repair Category", ["All", "Tires", "Brakes", "Services", "Manager Review", "Other"])
     
-    advisor_list = ["All"] + sorted([str(x) for x in df['ADVISOR'].unique() if str(x) != 'nan'])
-    advisor_filter = st.sidebar.selectbox("Advisor Name", advisor_list)
+    # Dynamic Advisor List
+    advisor_list = ["All"] + sorted(list(df['ADVISOR'].unique()))
+    advisor_filter = st.sidebar.selectbox("Advisor Name (Scroll or Type to search)", advisor_list)
     
     stage_filter = st.sidebar.radio("Follow-Up Stage", ["7-Day (Soft Touch)", "30-Day (Check-in)", "60-Day (Offer)", "90-Day (Re-engage/Audit)"])
     
