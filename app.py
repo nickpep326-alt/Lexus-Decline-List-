@@ -37,12 +37,24 @@ def process_data(df):
     df['Extracted_Amount'] = df['RO-RECOM'].apply(extract_total_amount)
     df['Category'] = df['RO-RECOM'].apply(categorize_repair)
     
+    # Check for "Recheck" flag in notes
+    df['Needs_Recheck'] = df['RO-RECOM'].str.lower().str.contains('recheck', na=False)
+    
     # Calculate Days Since Visit
     df['RO-DATE-DT'] = pd.to_datetime(df['RO-DATE'], errors='coerce')
     today = pd.to_datetime('today').normalize()
     df['Days_Since'] = (today - df['RO-DATE-DT']).dt.days
     
-    # Updated Tiers with $5000+ category
+    # Handle potentially missing new columns gracefully
+    if 'ADVISOR' not in df.columns:
+        if 'ADVISOR NAME' in df.columns: df['ADVISOR'] = df['ADVISOR NAME']
+        elif 'ADVISOR-NAME' in df.columns: df['ADVISOR'] = df['ADVISOR-NAME']
+        else: df['ADVISOR'] = 'Unknown Advisor'
+        
+    if 'EMAIL' not in df.columns:
+        if 'EMAIL-ADDRESS' in df.columns: df['EMAIL'] = df['EMAIL-ADDRESS']
+        else: df['EMAIL'] = 'No Email Provided'
+    
     def assign_tier(amt):
         if amt >= 5000: return "Ultra-Ticket (>$5000)"
         elif amt >= 1000: return "High-Ticket ($1000-$4999)"
@@ -52,6 +64,21 @@ def process_data(df):
         
     df['Dollar Tier'] = df['Extracted_Amount'].apply(assign_tier)
     df['FULL-NAME-DV'] = df['FULL-NAME-DV'].astype(str).str.title()
+    
+    # Rename columns to be professional and simple
+    rename_cols = {
+        'FULL-NAME-DV': 'Customer Name',
+        'PH-CELL-FMT-DV': 'Phone Number',
+        'Extracted_Amount': 'Declined Work Total',
+        'Days_Since': 'Last Serviced',
+        'MODEL': 'Model',
+        'YEAR': 'Year',
+        'SER-NO': 'VIN',
+        'RO-DATE': 'RO Date',
+        'RECID': 'RO Number',
+        'RO-RECOM': 'Original Notes'
+    }
+    df.rename(columns=rename_cols, inplace=True)
     return df
 
 # --- FILE UPLOADER ---
@@ -65,27 +92,32 @@ if uploaded_file:
     st.sidebar.header("Filter Pipeline")
     tier_filter = st.sidebar.selectbox("Dollar Tier", ["All", "Ultra-Ticket (>$5000)", "High-Ticket ($1000-$4999)", "Mid-Ticket ($300-$999)", "Low-Ticket (<$300)", "Unpriced / Zero"])
     category_filter = st.sidebar.selectbox("Repair Category", ["All", "Tires", "Brakes", "Services", "Manager Review", "Other"])
+    
+    advisor_list = ["All"] + sorted([str(x) for x in df['ADVISOR'].unique() if str(x) != 'nan'])
+    advisor_filter = st.sidebar.selectbox("Advisor Name", advisor_list)
+    
     stage_filter = st.sidebar.radio("Follow-Up Stage", ["7-Day (Soft Touch)", "30-Day (Check-in)", "60-Day (Offer)", "90-Day (Re-engage/Audit)"])
     
     # Apply Filters & Reset Index
     filtered_df = df.copy()
     if tier_filter != "All": filtered_df = filtered_df[filtered_df['Dollar Tier'] == tier_filter]
     if category_filter != "All": filtered_df = filtered_df[filtered_df['Category'].str.contains(category_filter, na=False)]
+    if advisor_filter != "All": filtered_df = filtered_df[filtered_df['ADVISOR'] == advisor_filter]
     filtered_df = filtered_df.reset_index(drop=True) 
         
     # --- METRICS BOARD ---
     col1, col2, col3 = st.columns(3)
     col1.metric("Customers in Queue", len(filtered_df))
-    col2.metric("Pipeline Value", f"${filtered_df['Extracted_Amount'].sum():,.2f}")
+    col2.metric("Pipeline Value", f"${filtered_df['Declined Work Total'].sum():,.2f}")
     col3.metric("Flagged for Review", len(df[df['Category'] == 'Manager Review']))
     st.divider()
 
     # --- INTERACTIVE QUEUE TABLE ---
     st.subheader("Customer Queue (Click a row to select)")
-    display_cols = ['FULL-NAME-DV', 'PH-CELL-FMT-DV', 'MODEL', 'Category', 'Extracted_Amount', 'Days_Since']
+    display_cols = ['Customer Name', 'Phone Number', 'EMAIL', 'Model', 'Category', 'Declined Work Total', 'Last Serviced']
     
     selection_event = st.dataframe(
-        filtered_df[display_cols].style.format({'Extracted_Amount': '${:,.2f}', 'Days_Since': '{:.0f} days'}),
+        filtered_df[display_cols].style.format({'Declined Work Total': '${:,.2f}', 'Last Serviced': '{:.0f} days'}),
         use_container_width=True,
         on_select="rerun",
         selection_mode="single-row"
@@ -99,23 +131,36 @@ if uploaded_file:
     if len(selected_rows) > 0:
         selected_index = selected_rows[0]
         customer = filtered_df.iloc[selected_index]
-        days_ago = int(customer['Days_Since']) if pd.notna(customer['Days_Since']) else "Unknown"
+        days_ago = int(customer['Last Serviced']) if pd.notna(customer['Last Serviced']) else "Unknown"
         
         c1, c2 = st.columns([1, 1])
         with c1:
-            st.write(f"**Name:** {customer['FULL-NAME-DV']}")
-            st.write(f"**Phone:** {customer['PH-CELL-FMT-DV']}")
-            st.write(f"**Vehicle:** {customer['YEAR']} {customer['MODEL']}")
-            st.markdown(f"**RO Date:** {customer['RO-DATE']} <span style='color:#e63946; font-weight:bold;'>({days_ago} days ago)</span> | RO #: {customer['RECID']}", unsafe_allow_html=True)
-        with c2:
-            st.error(f"**Declined Value:** ${customer['Extracted_Amount']:,.2f}")
-            st.warning(f"**Original Advisor Notes:**\n{customer['RO-RECOM']}")
+            st.write(f"**Name:** {customer['Customer Name']}")
+            st.write(f"**Phone:** {customer['Phone Number']}")
+            st.write(f"**Email:** {customer['EMAIL']}")
+            st.write(f"**Vehicle:** {customer['Year']} {customer['Model']}")
+            st.markdown(f"**RO Date:** {customer['RO Date']} <span style='color:#e63946; font-weight:bold;'>({days_ago} days ago)</span> | RO #: {customer['RO Number']}", unsafe_allow_html=True)
+            st.write(f"**Advisor:** {customer['ADVISOR']}")
             
-        st.markdown("---")
+            # --- NEW VIN COPY BUTTON SECTION ---
+            st.markdown("---")
+            st.write("**VIN (Hover to right of box to copy):**")
+            st.code(customer['VIN'], language="text")
+            st.markdown("[🔍 Open Lexus Drivers History Portal](https://drivers.lexus.com/lexusdrivers/history)")
+            st.markdown("---")
+            
+        with c2:
+            st.error(f"**Declined Value:** ${customer['Declined Work Total']:,.2f}")
+            st.warning(f"**Original Advisor Notes:**\n{customer['Original Notes']}")
+        
+        # RECHECK FLAG WARNING
+        if customer['Needs_Recheck']:
+            st.info("ℹ️ **RECHECK ITEM DETECTED:** The technician flagged this to be 'rechecked' rather than replaced immediately. **DO NOT push for a sale today.** Frame this follow-up as a reminder to monitor the item and to get their next regular service scheduled so we can keep an eye on it.")
+
         st.markdown("### Message Templates")
         
-        name = str(customer['FULL-NAME-DV']).split()[0] if pd.notna(customer['FULL-NAME-DV']) else "Valued Client"
-        model = str(customer['MODEL'])
+        name = str(customer['Customer Name']).split()[0] if pd.notna(customer['Customer Name']) else "Valued Client"
+        model = str(customer['Model'])
         cat = str(customer['Category'])
         
         sms_draft = ""
@@ -128,7 +173,7 @@ if uploaded_file:
         else:
             if 'Tires' in cat:
                 if "7-Day" in stage_filter:
-                    sms_draft = f"Hi {name}, this is Ray Catena Lexus. Just a quick check-in on your {model}! Let us know if you have any questions regarding the tire quote we provided during your visit."
+                    sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just a quick check-in on your {model}! Let us know if you have any questions regarding the tire quote we provided."
                     email_subj = f"Following up on your {model} visit - Ray Catena Lexus"
                     email_body = f"Hi {name},\n\nThank you for trusting us with your {model}. I wanted to follow up regarding the tire recommendations we provided last week. Ensuring you have proper tread is critical for safety and performance. Let us know if you'd like to get those scheduled!"
                 elif "30-Day" in stage_filter:
@@ -142,11 +187,11 @@ if uploaded_file:
                 elif "90-Day" in stage_filter:
                     sms_draft = f"Hi {name}, Ray Catena Lexus checking in! Just updating our records on your {model}. If you already had those tires replaced, let us know! If not, we'd love to see how we can help."
                     email_subj = f"Checking in on your {model} - Ray Catena Lexus"
-                    email_body = f"Hi {name},\n\nWe certainly don't want to be a bother, but we are currently updating our vehicle service records. It's been about 3 months since we recommended tires for your {model}.\n\nIf you've already had this taken care of elsewhere, please let us know so we can update your vehicle's history! If not, we'd love the opportunity to earn your business back. Let me know if you'd like me to check our current tire promos for you."
+                    email_body = f"Hi {name},\n\nWe certainly don't want to be a bother, but we are currently updating our vehicle service records. It's been about 3 months since we recommended tires for your {model}.\n\nIf you've already had this taken care of elsewhere, please let us know so we can update your vehicle's history! If not, we'd love the opportunity to earn your business back."
 
             elif 'Brakes' in cat:
                 if "7-Day" in stage_filter:
-                    sms_draft = f"Hi {name}, Ray Catena Lexus here. Just doing a courtesy check-in on your {model}. Let us know if you have any questions about the brake service quoted during your recent visit!"
+                    sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just doing a courtesy check-in on your {model}. Let us know if you have any questions about the brake service quoted during your recent visit!"
                     email_subj = f"Following up on your {model} visit - Ray Catena Lexus"
                     email_body = f"Hi {name},\n\nI am following up on the brake recommendations from your recent service. Your safety is our top priority, and we want to ensure you have all the information you need. Please reply or call if you'd like to schedule."
                 elif "30-Day" in stage_filter:
@@ -160,11 +205,11 @@ if uploaded_file:
                 elif "90-Day" in stage_filter:
                     sms_draft = f"Hi {name}, Ray Catena Lexus here. We're just updating our service records. Were you able to get the brakes serviced on your {model}? We want to make sure you're driving safely!"
                     email_subj = f"Service Audit: Safety update for your {model} - Ray Catena Lexus"
-                    email_body = f"Hi {name},\n\nI'm reaching out because we are doing a routine safety audit on our recent service visits. We noticed the brake service recommended for your {model} is still pending in our system.\n\nWe don't want to pester you, but since brakes are a critical safety component, we wanted to check if you had this completed elsewhere so we can close out our safety log. Please hit reply and let us know, or let us know if we can set up a loaner for you to bring it in!"
+                    email_body = f"Hi {name},\n\nI'm reaching out because we are doing a routine safety audit on our recent service visits. We noticed the brake service recommended for your {model} is still pending in our system.\n\nWe don't want to pester you, but since brakes are a critical safety component, we wanted to check if you had this completed elsewhere so we can close out our safety log."
 
             else:
                 if "7-Day" in stage_filter:
-                    sms_draft = f"Hi {name}, this is Ray Catena Lexus. Just a quick courtesy follow-up on your {model}. Let us know if you have any questions about the recommended maintenance!"
+                    sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just a quick courtesy follow-up on your {model}. Let us know if you have any questions about the recommended maintenance!"
                     email_subj = f"Following up on your {model} maintenance - Ray Catena Lexus"
                     email_body = f"Hi {name},\n\nI'm checking in to see if you had any questions regarding the factory maintenance we recommended during your visit. We're here to help keep your {model} running perfectly."
                 elif "30-Day" in stage_filter:
@@ -178,7 +223,7 @@ if uploaded_file:
                 elif "90-Day" in stage_filter:
                     sms_draft = f"Hi {name}, from Ray Catena Lexus! Just touching base on your {model}. If you already took care of that recommended maintenance, let us know so we can update your file!"
                     email_subj = f"Updating your {model} records - Ray Catena Lexus"
-                    email_body = f"Hi {name},\n\nWe know how easily routine maintenance can slip down the to-do list! It's been a few months since your last visit with your {model}.\n\nIf there's anything we can do—like reserving a loaner car or applying a current service special—just let us know. If you've already handled the service, simply reply to let us know so we can update your vehicle's service history so you stop getting these reminders!"
+                    email_body = f"Hi {name},\n\nWe know how easily routine maintenance can slip down the to-do list! It's been a few months since your last visit with your {model}.\n\nIf there's anything we can do—like reserving a loaner car or applying a current service special—just let us know. If you've already handled the service, simply reply to let us know so we can update your history!"
 
         col_sms, col_email = st.columns(2)
         with col_sms:
@@ -187,41 +232,47 @@ if uploaded_file:
             email_combined = f"Subject: {email_subj}\n\n{email_body}"
             st.text_area("📧 Email Draft", value=email_combined, height=250)
 
-        # --- OBJECTION HANDLING SECTION ---
+        # --- DEALER TIRE & DEALERSHIP OBJECTION HANDLING SECTION ---
         st.markdown("---")
-        with st.expander(f"💬 Overcoming Objections: Talk Tracks for {cat}", expanded=True):
+        with st.expander(f"💬 High-Conversion Dealership Rebuttals for {cat}", expanded=True):
+            
+            st.markdown("""
+            ### 🤝 "I need to talk to my spouse/partner about it."
+            * **The Rebuttal:** "I completely understand wanting to make that decision together. Let me text or email you a copy of the multi-point inspection report so they can actually see the measurements and safety notes for themselves."
+            * **The Close:** *"Since we sometimes have to order parts, can I pencil you in for next week? We can always move or cancel the appointment if your spouse decides against it once they see the report."*
+            
+            ### 📄 "I'm turning my lease in / trading it in soon."
+            * **The Rebuttal (Lease):** "That’s actually why I'm bringing it up. Lexus Financial requires at least 4/32” of tread on tires and specific brake pad thickness. If you return it below that, they will charge you a wear-and-tear penalty that is almost always higher than the cost of replacing them here today."
+            * **The Rebuttal (Trade-In):** "Our appraisers deduct heavily for worn safety items. Having these replaced now usually increases your trade-in value, so you end up recouping the money anyway, while staying safe in the meantime."
+            * **The Close:** *"Would it make sense to protect your wallet from lease penalties and get this done now so you can drive safely until you turn it in?"*
+            
+            ### ⏱️ "I don't have time to wait today."
+            * **The Rebuttal:** "I respect your time, and you don't have to wait here at all. We can set you up with a complimentary Lexus loaner car so you can run your errands, or you can relax in our customer lounge with Wi-Fi and coffee."
+            * **The Close:** *"If we provide the loaner so your schedule isn't impacted, what day next week works best to drop it off?"*
+            """)
+            
             if cat == 'Tires':
                 st.markdown("""
-                ### 🛑 Objection: Price ("I can get them cheaper somewhere else.")
-                * **The Rebuttal:** "I completely understand wanting the best price. We actually offer a Tire Price Match Guarantee. Plus, purchasing through us includes complimentary 24-month Road Hazard coverage, which most discount shops charge extra for."
-                * **The Close:** *"If I can match the price of the tires you found, would you prefer to have our Lexus Master Technicians handle the installation today?"*
+                ### 🛑 "I'll just wait until winter/bad weather." or "I don't need them right now."
+                * **The Rebuttal:** "I hear you, but tires are the only thing touching the road. Even on dry pavement, bald tires drastically increase your stopping distance. Don't wait for a rainy day to find out you don't have enough traction to stop safely."
+                * **The Close:** *"Since your tires are already below safety standards, let's look at getting them replaced so you aren't risking an accident. Should I check our current tire rebates?"*
                 
-                ### 🛑 Objection: Time ("I don't have time to sit and wait at the dealership.")
-                * **The Rebuttal:** "I completely respect your time. You don't have to wait here at all. We can reserve a complimentary Lexus loaner vehicle for you. You just drop your car off, take the loaner to work or run your errands, and come back when it's ready."
-                * **The Close:** *"What day this week works best for you to pick up your loaner vehicle?"*
+                ### 🛑 "I can get them cheaper at Costco / Mavis."
+                * **The Rebuttal:** "I totally get wanting the best price. That is exactly why we offer a Tire Price Match Guarantee. Make sure they are giving you an 'apples-to-apples' quote—our tires include complimentary 24-month Road Hazard coverage, factory-trained installation, a car wash, and a loaner vehicle."
+                * **The Close:** *"If I can match the price of the tires you found, would you prefer to have our Lexus Master Technicians handle the installation today?"*
                 """)
             elif cat == 'Brakes':
                 st.markdown("""
-                ### 🛑 Objection: Price / Delaying ("They aren't squeaking yet, I'll wait.")
-                * **The Rebuttal:** "I'm glad you aren't hearing noise yet! However, we actually want to replace the pads *before* they grind. Here at Lexus, we do not cut or resurface damaged rotors—they must be completely replaced. If the pads wear down to the metal and score the rotors, it easily doubles or triples the cost of your repair."
-                * **The Close:** *"Since replacing just the pads right now will save you the cost of a full rotor replacement later, would you like to get this taken care of?"*
-                
-                ### 🛑 Objection: Time ("I need my car for work, I can't leave it.")
-                * **The Rebuttal:** "We don't want this to interrupt your day at all. Brake safety is a priority, so we will set you up with a complimentary Lexus loaner car. You can seamlessly continue your day while we get your vehicle safe for the road."
-                * **The Close:** *"Would morning or afternoon be easier for you to swap into the loaner?"*
+                ### 🛑 "They aren't squeaking yet, I'll wait until my next service."
+                * **The Rebuttal:** "I'm glad you aren't hearing noise yet! However, we actually want to replace the pads *before* they grind. Here at Lexus, we strictly adhere to factory safety standards, meaning we do not cut or resurface damaged rotors—they must be replaced. If the pads wear down to the metal and score the rotors, it easily doubles or triples your repair cost."
+                * **The Close:** *"Since replacing just the pads right now will save you hundreds on a full rotor replacement later, would you like to get this taken care of?"*
                 """)
             elif cat == 'Services':
                 st.markdown("""
-                ### 🛑 Objection: Price ("I'll just take it to my local mechanic / Jiffy Lube.")
-                * **The Rebuttal:** "You absolutely have that right. Just keep in mind that our service includes Lexus-specific diagnostic checks, factory-grade fluids, and ensures your Lexus warranty stays fully intact. Local shops also can't perform the software updates and recall checks we do during your visit."
-                * **The Close:** *"For the peace of mind knowing it was done to factory specs, plus the complimentary car wash, doesn't it make sense to keep your Lexus with Lexus?"*
-                
-                ### 🛑 Objection: Time ("I'm too busy this month to deal with maintenance.")
-                * **The Rebuttal:** "We know life gets incredibly busy. That's exactly why we offer complimentary Lexus loaner vehicles. We want this to be zero hassle for you. Drop it off, take our car, and we'll let you know when yours is ready."
-                * **The Close:** *"If we provide the loaner so your schedule isn't impacted, what day next week works to get this maintenance knocked out?"*
+                ### 🛑 "I'll just take it to my local independent mechanic."
+                * **The Rebuttal:** "You absolutely have that right. Just keep in mind that doing your maintenance with us ensures your Lexus warranty stays fully intact. Local shops don't have our proprietary diagnostic software, and they cannot perform the open factory safety recall checks we do during every single visit."
+                * **The Close:** *"For the peace of mind knowing it was done to exact factory specs by Master Certified techs, plus the complimentary loaner, doesn't it make sense to keep your Lexus with Lexus?"*
                 """)
-            else:
-                st.markdown("*Review the specific technician notes above to formulate the best value proposition for this repair.*")
 
     else:
         st.info("👆 Click on any customer row in the table above to open their file and generate follow-up templates.")
