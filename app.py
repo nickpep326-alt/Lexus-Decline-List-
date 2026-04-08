@@ -142,7 +142,7 @@ if uploaded_file:
             st.markdown(f"**RO Date:** {customer['RO Date']} <span style='color:#e63946; font-weight:bold;'>({days_ago} days ago)</span> | RO #: {customer['RO Number']}", unsafe_allow_html=True)
             st.write(f"**Advisor:** {customer['ADVISOR']}")
             
-            # --- NEW VIN COPY BUTTON SECTION ---
+            # --- VIN COPY BUTTON SECTION ---
             st.markdown("---")
             st.write("**VIN (Hover to right of box to copy):**")
             st.code(customer['VIN'], language="text")
@@ -263,9 +263,9 @@ if uploaded_file:
                 """)
             elif cat == 'Brakes':
                 st.markdown("""
-                ### 🛑 "They aren't squeaking yet, I'll wait until my next service."
-                * **The Rebuttal:** "I'm glad you aren't hearing noise yet! However, we actually want to replace the pads *before* they grind. Here at Lexus, we strictly adhere to factory safety standards, meaning we do not cut or resurface damaged rotors—they must be replaced. If the pads wear down to the metal and score the rotors, it easily doubles or triples your repair cost."
-                * **The Close:** *"Since replacing just the pads right now will save you hundreds on a full rotor replacement later, would you like to get this taken care of?"*
+                ### 🛑 "They aren't squeaking or vibrating yet, I'll wait until my next service."
+                * **The Rebuttal:** "I'm glad you aren't experiencing any noise or steering wheel vibrations yet! Our primary concern right now is your safety. As brake pads get this low, they lose their ability to dissipate heat. This significantly increases your emergency stopping distance, and the excess heat can warp your rotors. Because we strictly follow Lexus safety standards, we do not cut or resurface warped rotors—they must be completely replaced."
+                * **The Close:** *"For your safety and to prevent any performance loss or vibration on the highway, would you like us to get these pads swapped out today?"*
                 """)
             elif cat == 'Services':
                 st.markdown("""
