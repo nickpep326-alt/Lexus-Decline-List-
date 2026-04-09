@@ -38,12 +38,20 @@ def get_contacted_ros(_sheet):
 
 contacted_ros = get_contacted_ros(sheet)
 
-# --- DATA PROCESSING ---
+# --- UPGRADED DATA PROCESSING ---
 def extract_total_amount(text):
     if pd.isna(text): return 0.0
-    matches = re.findall(r'\$([0-9,]+(?:\.\d{2})?)', str(text))
+    text_str = str(text)
+    
+    # 1. Catch anything with a dollar sign (e.g., $150, $219.99)
+    dollar_matches = re.findall(r'\$([0-9,]+(?:\.\d{2})?)', text_str)
+    
+    # 2. Catch standard price formats WITHOUT a dollar sign (e.g., 219.99)
+    # This specifically looks for numbers ending in exactly two decimal places
+    decimal_matches = re.findall(r'(?<!\$)\b([0-9,]+\.\d{2})\b', text_str)
+    
     total = 0.0
-    for match in matches:
+    for match in dollar_matches + decimal_matches:
         try: total += float(match.replace(',', ''))
         except: pass
     return total
@@ -53,16 +61,16 @@ def categorize_repair(text):
     text_lower = str(text).lower()
     categories = []
     
-    # Expanded Tire Dictionary
-    tire_brands = ['tire', 'alignment', 'michelin', 'goodyear', 'yokohama', 'bridgestone', 'pirelli', 'continental', 'dunlop', 'firestone', 'hankook', 'kumho', 'falken', 'toyo']
+    # Expanded Tire Dictionary (Alignment moved to services)
+    tire_brands = ['tire', 'michelin', 'goodyear', 'yokohama', 'bridgestone', 'pirelli', 'continental', 'dunlop', 'firestone', 'hankook', 'kumho', 'falken', 'toyo']
     if any(brand in text_lower for brand in tire_brands): categories.append('Tires')
     
     # Expanded Brake Dictionary
     brake_keywords = ['brake', 'rotor', 'pad', 'caliper', 'resurface', 'shoe']
     if any(kw in text_lower for kw in brake_keywords): categories.append('Brakes')
     
-    # Expanded Service Dictionary
-    service_keywords = ['service', 'fluid', 'filter', 'maintenance', 'flush', 'spark plug', 'battery', 'wiper', 'bulb', 'oil', 'synthetic', 'coolant']
+    # Upgraded Service Dictionary
+    service_keywords = ['service', 'fluid', 'filter', 'maintenance', 'flush', 'spark plug', 'battery', 'wiper', 'bulb', 'oil', 'synthetic', 'coolant', 'alignment', '4wa', 'belt', 'tensioner', 'fuel bg', 'water pump', 'pump', 'injector']
     if any(kw in text_lower for kw in service_keywords): categories.append('Services')
     
     if not categories: return 'Other'
