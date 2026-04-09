@@ -2,11 +2,42 @@ import streamlit as st
 import pandas as pd
 import re
 from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Lexus CRM Dashboard", layout="wide")
 st.title("Lexus Declined Repair Follow-Up Dashboard")
 st.markdown("Team workspace for BDC, Advisors, and Management to track and follow up on declined services.")
+
+# --- GOOGLE SHEETS CLOUD DATABASE SETUP ---
+@st.cache_resource
+def init_connection():
+    try:
+        # Looks for the secure API key we will set up
+        creds = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        )
+        client = gspread.authorize(creds)
+        sheet = client.open_by_url(st.secrets["private"]["google_sheet_url"]).sheet1
+        return sheet
+    except Exception as e:
+        return None
+
+sheet = init_connection()
+
+# Fetch already contacted ROs from the cloud
+@st.cache_data(ttl=10) # Refreshes every 10 seconds to catch other team members' updates
+def get_contacted_ros(_sheet):
+    if _sheet is None: return []
+    try:
+        records = _sheet.get_all_records()
+        return [str(row['RO Number']) for row in records if 'RO Number' in row]
+    except:
+        return []
+
+contacted_ros = get_contacted_ros(sheet)
 
 # --- DATA PROCESSING ---
 def extract_total_amount(text):
@@ -36,30 +67,23 @@ def process_data(df):
     
     df['Extracted_Amount'] = df['RO-RECOM'].apply(extract_total_amount)
     df['Category'] = df['RO-RECOM'].apply(categorize_repair)
-    
-    # Check for "Recheck" flag in notes
     df['Needs_Recheck'] = df['RO-RECOM'].str.lower().str.contains('recheck', na=False)
     
-    # Calculate Days Since Visit
     df['RO-DATE-DT'] = pd.to_datetime(df['RO-DATE'], errors='coerce')
     today = pd.to_datetime('today').normalize()
     df['Days_Since'] = (today - df['RO-DATE-DT']).dt.days
     
-    # Handle potentially missing Email columns gracefully
-    if 'EMAIL' not in df.columns:
-        if 'EMAIL-ADDRESS' in df.columns: df['EMAIL'] = df['EMAIL-ADDRESS']
-        else: df['EMAIL'] = 'No Email Provided'
-
-    # --- UPGRADED ADVISOR CLEANING LOGIC ---
     if 'ADVISOR' not in df.columns:
         if 'ADVISOR NAME' in df.columns: df['ADVISOR'] = df['ADVISOR NAME']
         elif 'ADVISOR-NAME' in df.columns: df['ADVISOR'] = df['ADVISOR-NAME']
         else: df['ADVISOR'] = 'Unknown'
         
-    # Force names to be strings, strip hidden spaces, and make Title Case
     df['ADVISOR'] = df['ADVISOR'].fillna('Unknown').astype(str).str.strip().str.title()
-    # Catch weird NaN strings
     df['ADVISOR'] = df['ADVISOR'].replace({'Nan': 'Unknown', '': 'Unknown'})
+        
+    if 'EMAIL' not in df.columns:
+        if 'EMAIL-ADDRESS' in df.columns: df['EMAIL'] = df['EMAIL-ADDRESS']
+        else: df['EMAIL'] = 'No Email Provided'
     
     def assign_tier(amt):
         if amt >= 5000: return "Ultra-Ticket (>$5000)"
@@ -71,21 +95,19 @@ def process_data(df):
     df['Dollar Tier'] = df['Extracted_Amount'].apply(assign_tier)
     df['FULL-NAME-DV'] = df['FULL-NAME-DV'].astype(str).str.title()
     
-    # Rename columns to be professional and simple
     rename_cols = {
-        'FULL-NAME-DV': 'Customer Name',
-        'PH-CELL-FMT-DV': 'Phone Number',
-        'Extracted_Amount': 'Declined Work Total',
-        'Days_Since': 'Last Serviced',
-        'MODEL': 'Model',
-        'YEAR': 'Year',
-        'SER-NO': 'VIN',
-        'RO-DATE': 'RO Date',
-        'RECID': 'RO Number',
-        'RO-RECOM': 'Original Notes'
+        'FULL-NAME-DV': 'Customer Name', 'PH-CELL-FMT-DV': 'Phone Number',
+        'Extracted_Amount': 'Declined Work Total', 'Days_Since': 'Last Serviced',
+        'MODEL': 'Model', 'YEAR': 'Year', 'SER-NO': 'VIN',
+        'RO-DATE': 'RO Date', 'RECID': 'RO Number', 'RO-RECOM': 'Original Notes'
     }
     df.rename(columns=rename_cols, inplace=True)
     return df
+
+# --- SIDEBAR IDENTIFIER ---
+st.sidebar.markdown("### 👤 User Login")
+agent_name = st.sidebar.text_input("Your Name (Required to log calls)", placeholder="e.g., John D.")
+st.sidebar.divider()
 
 # --- FILE UPLOADER ---
 uploaded_file = st.sidebar.file_uploader("Upload Reynolds Export (CSV)", type=['csv'])
@@ -94,18 +116,18 @@ if uploaded_file:
     raw_df = pd.read_csv(uploaded_file)
     df = process_data(raw_df)
     
+    # FILTER OUT CLOUD-CONTACTED LEADS
+    df = df[~df['RO Number'].astype(str).isin(contacted_ros)]
+    
     # --- SIDEBAR FILTERS ---
     st.sidebar.header("Filter Pipeline")
     tier_filter = st.sidebar.selectbox("Dollar Tier", ["All", "Ultra-Ticket (>$5000)", "High-Ticket ($1000-$4999)", "Mid-Ticket ($300-$999)", "Low-Ticket (<$300)", "Unpriced / Zero"])
     category_filter = st.sidebar.selectbox("Repair Category", ["All", "Tires", "Brakes", "Services", "Manager Review", "Other"])
     
-    # Dynamic Advisor List
     advisor_list = ["All"] + sorted(list(df['ADVISOR'].unique()))
-    advisor_filter = st.sidebar.selectbox("Advisor Name (Scroll or Type to search)", advisor_list)
-    
+    advisor_filter = st.sidebar.selectbox("Advisor Name (Scroll or Type)", advisor_list)
     stage_filter = st.sidebar.radio("Follow-Up Stage", ["7-Day (Soft Touch)", "30-Day (Check-in)", "60-Day (Offer)", "90-Day (Re-engage/Audit)"])
     
-    # Apply Filters & Reset Index
     filtered_df = df.copy()
     if tier_filter != "All": filtered_df = filtered_df[filtered_df['Dollar Tier'] == tier_filter]
     if category_filter != "All": filtered_df = filtered_df[filtered_df['Category'].str.contains(category_filter, na=False)]
@@ -116,7 +138,7 @@ if uploaded_file:
     col1, col2, col3 = st.columns(3)
     col1.metric("Customers in Queue", len(filtered_df))
     col2.metric("Pipeline Value", f"${filtered_df['Declined Work Total'].sum():,.2f}")
-    col3.metric("Flagged for Review", len(df[df['Category'] == 'Manager Review']))
+    col3.metric("Already Contacted (Cloud)", len(contacted_ros))
     st.divider()
 
     # --- INTERACTIVE QUEUE TABLE ---
@@ -149,7 +171,6 @@ if uploaded_file:
             st.markdown(f"**RO Date:** {customer['RO Date']} <span style='color:#e63946; font-weight:bold;'>({days_ago} days ago)</span> | RO #: {customer['RO Number']}", unsafe_allow_html=True)
             st.write(f"**Advisor:** {customer['ADVISOR']}")
             
-            # --- VIN COPY BUTTON SECTION ---
             st.markdown("---")
             st.write("**VIN (Hover to right of box to copy):**")
             st.code(customer['VIN'], language="text")
@@ -159,6 +180,26 @@ if uploaded_file:
         with c2:
             st.error(f"**Declined Value:** ${customer['Declined Work Total']:,.2f}")
             st.warning(f"**Original Advisor Notes:**\n{customer['Original Notes']}")
+            
+            # --- CLOUD TRACKING BUTTON ---
+            st.markdown("---")
+            st.markdown("### ☁️ Lead Tracking")
+            if sheet is None:
+                st.warning("⚠️ Google Sheets database not connected yet. Tracking is disabled.")
+            else:
+                if st.button("✅ Mark as Contacted & Remove from Queue", type="primary", use_container_width=True):
+                    if not agent_name:
+                        st.error("🚨 Please enter your name in the top left sidebar before marking a lead!")
+                    else:
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        try:
+                            # Append to Google Sheet
+                            sheet.append_row([str(customer['RO Number']), customer['Customer Name'], agent_name, timestamp, stage_filter])
+                            st.success("Lead securely logged to Cloud Database! Refreshing queue...")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to log: {e}")
         
         # RECHECK FLAG WARNING
         if customer['Needs_Recheck']:
