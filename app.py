@@ -219,46 +219,62 @@ with tab_outreach:
         
         filtered_df = df.copy()
         
-        # Apply Dollar Tier Multi-Filter
+        # --- FAILSAFE FILTERING LOGIC ---
+        # 1. Tier Filter
         if not tier_filter:
-            filtered_df = filtered_df.iloc[0:0] 
+            filtered_df = pd.DataFrame(columns=df.columns)
         else:
             filtered_df = filtered_df[filtered_df['Dollar Tier'].isin(tier_filter)]
             
-        # Apply Category Multi-Filter
-        if not category_filter:
-            filtered_df = filtered_df.iloc[0:0] 
-        elif len(category_filter) < len(category_options):
-            def is_strict_match(cat_str):
-                if pd.isna(cat_str): return False
-                row_cats = [c.strip() for c in cat_str.split(',')]
-                return all(c in category_filter for c in row_cats)
-            filtered_df = filtered_df[filtered_df['Category'].apply(is_strict_match)]
-            
-        if advisor_filter != "All": 
+        # 2. Category Filter
+        if not filtered_df.empty:
+            if not category_filter:
+                filtered_df = pd.DataFrame(columns=df.columns)
+            elif len(category_filter) < len(category_options):
+                def is_strict_match(cat_str):
+                    if pd.isna(cat_str): return False
+                    row_cats = [c.strip() for c in cat_str.split(',')]
+                    return all(c in category_filter for c in row_cats)
+                
+                # Use .astype(bool) to prevent pandas empty-series KeyError
+                mask = filtered_df['Category'].apply(is_strict_match).astype(bool)
+                filtered_df = filtered_df[mask]
+                
+        # 3. Advisor Filter
+        if not filtered_df.empty and advisor_filter != "All": 
             filtered_df = filtered_df[filtered_df['ADVISOR'] == advisor_filter]
             
         filtered_df = filtered_df.reset_index(drop=True) 
+        
+        # --- SAFE METRIC CALCULATION ---
+        pipeline_val = filtered_df['Declined Work Total'].sum() if ('Declined Work Total' in filtered_df.columns and not filtered_df.empty) else 0.0
             
         col1, col2, col3 = st.columns(3)
         col1.metric("Customers in Queue", len(filtered_df))
-        col2.metric("Pipeline Value", f"${filtered_df['Declined Work Total'].sum():,.2f}")
+        col2.metric("Pipeline Value", f"${pipeline_val:,.2f}")
         col3.metric("Already Contacted (Cloud)", len(contacted_ros))
         st.divider()
 
         st.subheader("Customer Queue (Click a row to select)")
-        display_cols = ['Customer Name', 'Phone Number', 'EMAIL', 'Model', 'Category', 'Declined Work Total', 'Last Serviced']
         
-        selection_event = st.dataframe(
-            filtered_df[display_cols].style.format({'Declined Work Total': '${:,.2f}', 'Last Serviced': '{:.0f} days'}),
-            use_container_width=True,
-            on_select="rerun",
-            selection_mode="single-row"
-        )
+        # --- FAILSAFE TABLE DISPLAY ---
+        if filtered_df.empty:
+            st.info("ℹ️ No customers match your current filter settings. Try selecting more options in the sidebar!")
+            selected_rows = []
+        else:
+            display_cols = ['Customer Name', 'Phone Number', 'EMAIL', 'Model', 'Category', 'Declined Work Total', 'Last Serviced']
+            safe_cols = [c for c in display_cols if c in filtered_df.columns] # Extra protection
+            
+            selection_event = st.dataframe(
+                filtered_df[safe_cols].style.format({'Declined Work Total': '${:,.2f}', 'Last Serviced': '{:.0f} days'}),
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+            selected_rows = selection_event.selection.rows
+
         st.divider()
-        
         st.subheader("Action & Outreach Panel")
-        selected_rows = selection_event.selection.rows
 
         if len(selected_rows) > 0:
             selected_index = selected_rows[0]
@@ -437,7 +453,8 @@ with tab_outreach:
                     """)
 
         else:
-            st.info("👆 Click on any customer row in the table above to open their file and generate follow-up templates.")
+            if not filtered_df.empty:
+                st.info("👆 Click on any customer row in the table above to open their file and generate follow-up templates.")
 
     else:
         st.info("👋 Welcome! Please upload your 'Declined Repairs' CSV export using the sidebar on the left to begin outreach.")
