@@ -136,6 +136,10 @@ def process_approved_data(df):
             # Bulletproof stripping of $ and commas, ensuring absolute numbers
             df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce').fillna(0)
             
+    # Clean the Upsell column to ensure it is numeric for tracking
+    if 'Upsell' in df.columns:
+        df['Upsell'] = pd.to_numeric(df['Upsell'].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce').fillna(0)
+            
     return df
 
 # --- SIDEBAR IDENTIFIER ---
@@ -421,6 +425,29 @@ with tab_sales:
             m1.metric("Total Missed Sales", f"${missed_total:,.2f}")
             m2.metric("Missed Labor", f"${missed_labor:,.2f}")
             m3.metric("Missed Parts", f"${missed_parts:,.2f}")
+            
+            # 3. UPSELL TRACKING SECTION
+            st.divider()
+            st.subheader("🚀 Upsold Work Tracking")
+            
+            total_upsells = app_df['Upsell'].sum() if 'Upsell' in app_df.columns else 0
+            
+            u_col1, u_col2 = st.columns([1, 2])
+            with u_col1:
+                st.metric("Total Services Upsold", f"{int(total_upsells):,}")
+                st.info("💡 **Upsell count** represents the number of times a service was successfully added to a repair order after the initial write-up.")
+            
+            with u_col2:
+                if 'Upsell' in app_df.columns and total_upsells > 0:
+                    st.markdown("**🔥 Top 5 Most Frequently Upsold Services**")
+                    top_upsells = app_df[app_df['Upsell'] > 0].sort_values(by='Upsell', ascending=False).head(5)
+                    st.dataframe(
+                        top_upsells[['Operation Code', 'Description', 'Upsell']].style.format({'Upsell': '{:.0f}'}),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.warning("No upsell data available in the uploaded file.")
             
             st.divider()
             
