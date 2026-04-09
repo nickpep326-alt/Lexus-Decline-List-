@@ -44,17 +44,19 @@ def extract_total_amount(text):
     text_str = str(text)
     
     # 1. EXPLICIT TOTAL OVERRIDE: If the advisor wrote "Total $X", use it immediately.
-    explicit_total = re.search(r'(?i)total[\s\-\:\*\$]*([0-9,]+\.\d{2})', text_str)
+    explicit_total = re.search(r'(?i)total[\s\-\:\*\$]*([0-9,]+(?:\.\d{2})?)', text_str)
     if explicit_total:
         try: return float(explicit_total.group(1).replace(',', ''))
         except: pass
 
     # 2. BREAKDOWN SCRUBBER: Remove "per item" text strings so they don't get double-counted
-    text_str = re.sub(r'(?i)\$?[0-9,]+\.\d{2}\s*(?:ea|each|\/ea|per tire)\b', '', text_str)
-    text_str = re.sub(r'(?i)\b(?:ea|each|per|@)\s*\$?[0-9,]+\.\d{2}\b', '', text_str)
+    text_str = re.sub(r'(?i)\$?[0-9,]+(?:\.\d{2})?\s*(?:ea|each|\/ea|per tire)\b', '', text_str)
+    text_str = re.sub(r'(?i)\b(?:ea|each|per|@)\s*\$?[0-9,]+(?:\.\d{2})?\b', '', text_str)
     
-    # 3. BULLETPROOF REGEX: Catch prices safely without ghosting numbers
-    matches = re.findall(r'\$?[0-9,]+\.\d{2}', text_str)
+    # 3. BULLETPROOF REGEX: 
+    # Match 1: Any number with a $ sign (decimals optional, e.g., $470, $1710)
+    # Match 2: Any number without a $ sign that strictly ends in .XX (prevents grabbing year models like 2018)
+    matches = re.findall(r'\$[0-9,]+(?:\.\d{2})?|(?<![\$\d.,])[0-9,]+\.\d{2}\b', text_str)
     
     amounts = []
     for m in matches:
