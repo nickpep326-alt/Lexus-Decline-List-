@@ -304,6 +304,7 @@ with tab_outreach:
                 st.markdown("### ☁️ Lead Tracking")
                 
                 contact_method = st.radio("How did you contact this customer?", ["Phone Call", "Text Message", "Email", "Voicemail"], horizontal=True)
+                outreach_outcome = st.radio("What was the outcome?", ["Left Message / Pending", "Appointment Scheduled 📅", "Customer Declined 🛑", "Sold / Approved ✅"], horizontal=True)
 
                 if sheet is None:
                     st.warning("⚠️ Google Sheets database not connected yet. Tracking is disabled.")
@@ -316,7 +317,8 @@ with tab_outreach:
                             log_success = False
                             
                             try:
-                                sheet.append_row([str(customer['RO Number']), customer['Customer Name'], agent_name, timestamp, stage_filter, contact_method])
+                                # Now appending 7 items to the sheet, including outreach_outcome
+                                sheet.append_row([str(customer['RO Number']), customer['Customer Name'], agent_name, timestamp, stage_filter, contact_method, outreach_outcome])
                                 log_success = True
                             except Exception as e:
                                 st.error(f"Failed to log to cloud: {e}")
@@ -457,7 +459,8 @@ with tab_outreach:
                 st.info("👆 Click on any customer row in the table above to open their file and generate follow-up templates.")
 
     else:
-        st.info("👋 Welcome! Please upload your 'Declined Repairs' CSV export using the sidebar on the left to begin outreach.")
+        # BRAND NEW CLEAR INSTRUCTIONS FOR USERS
+        st.info("👋 Welcome! To get started:\n\n1️⃣ **Enter your name** in the top left sidebar.\n2️⃣ **Upload your 'Declined Repairs' CSV export** using the sidebar on the left.")
 
 # ==========================================
 # TAB 2: APPROVED WORK & SALES DATA
@@ -579,7 +582,7 @@ with tab_history:
         st.info("No outreach history found yet. Ensure Row 1 of your Google Sheet has your headers, and start logging calls!")
     else:
         # Provide some filtering for the history log
-        h_col1, h_col2 = st.columns(2)
+        h_col1, h_col2, h_col3 = st.columns(3)
         
         # CRASH-PROOF DROPDOWNS
         agent_list = sorted(list(cloud_df['Agent Name'].unique())) if 'Agent Name' in cloud_df.columns else []
@@ -588,6 +591,9 @@ with tab_history:
         method_list = list(cloud_df['Contact Method'].unique()) if 'Contact Method' in cloud_df.columns else []
         method_filter = h_col2.selectbox("Filter by Contact Method", ["All"] + method_list)
         
+        outcome_list = list(cloud_df['Outcome'].unique()) if 'Outcome' in cloud_df.columns else []
+        outcome_filter = h_col3.selectbox("Filter by Outcome", ["All"] + outcome_list)
+        
         display_history = cloud_df.copy()
         
         if agent_filter != "All" and 'Agent Name' in display_history.columns:
@@ -595,6 +601,9 @@ with tab_history:
             
         if method_filter != "All" and 'Contact Method' in display_history.columns:
             display_history = display_history[display_history['Contact Method'] == method_filter]
+            
+        if outcome_filter != "All" and 'Outcome' in display_history.columns:
+            display_history = display_history[display_history['Outcome'] == outcome_filter]
             
         # Safely display and sort the dataframe
         if 'Timestamp' in display_history.columns:
