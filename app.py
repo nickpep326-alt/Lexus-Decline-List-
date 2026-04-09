@@ -70,7 +70,7 @@ def categorize_repair(text):
     # Join multiple categories together (e.g., "Tires, Brakes")
     return ', '.join(categories)
 
-@st.cache_data
+# CACHE REMOVED HERE: Ensures the data is processed fresh every single time you upload!
 def process_data(df):
     internal_names = ["RAY CATENA LEXUS OF MONMOUTH", "RAY CATENA LEXUS OF FREEHOLD"]
     df = df[~df['FULL-NAME-DV'].isin(internal_names)].copy()
@@ -132,16 +132,39 @@ if uploaded_file:
     # --- SIDEBAR FILTERS ---
     st.sidebar.header("Filter Pipeline")
     tier_filter = st.sidebar.selectbox("Dollar Tier", ["All", "Ultra-Ticket (>$5000)", "High-Ticket ($1000-$4999)", "Mid-Ticket ($300-$999)", "Low-Ticket (<$300)", "Unpriced / Zero"])
-    category_filter = st.sidebar.selectbox("Repair Category", ["All", "Tires", "Brakes", "Services", "Manager Review", "Other"])
+    
+    # --- UPGRADED MULTI-SELECT CATEGORY FILTER ---
+    category_options = ["Tires", "Brakes", "Services", "Manager Review", "Other"]
+    category_filter = st.sidebar.multiselect(
+        "Repair Category (Select one or multiple)", 
+        options=category_options,
+        default=category_options  # Starts with all selected
+    )
     
     advisor_list = ["All"] + sorted(list(df['ADVISOR'].unique()))
     advisor_filter = st.sidebar.selectbox("Advisor Name (Scroll or Type)", advisor_list)
     stage_filter = st.sidebar.radio("Follow-Up Stage", ["7-Day (Soft Touch)", "30-Day (Check-in)", "60-Day (Offer)", "90-Day (Re-engage/Audit)"])
     
+    # Apply Filters & Reset Index
     filtered_df = df.copy()
-    if tier_filter != "All": filtered_df = filtered_df[filtered_df['Dollar Tier'] == tier_filter]
-    if category_filter != "All": filtered_df = filtered_df[filtered_df['Category'].str.contains(category_filter, na=False)]
-    if advisor_filter != "All": filtered_df = filtered_df[filtered_df['ADVISOR'] == advisor_filter]
+    
+    # Filter Dollar Tier
+    if tier_filter != "All": 
+        filtered_df = filtered_df[filtered_df['Dollar Tier'] == tier_filter]
+        
+    # Filter Category (Multi-Select Logic)
+    if not category_filter:
+        # If they uncheck everything, show an empty list instead of crashing
+        filtered_df = filtered_df.iloc[0:0] 
+    elif len(category_filter) < len(category_options):
+        # Create a search pattern that looks for ANY of the selected categories
+        pattern = '|'.join(category_filter)
+        filtered_df = filtered_df[filtered_df['Category'].str.contains(pattern, case=False, na=False)]
+        
+    # Filter Advisor
+    if advisor_filter != "All": 
+        filtered_df = filtered_df[filtered_df['ADVISOR'] == advisor_filter]
+        
     filtered_df = filtered_df.reset_index(drop=True) 
         
     # --- METRICS BOARD ---
@@ -229,7 +252,7 @@ if uploaded_file:
             sms_draft = "⚠️ DO NOT CONTACT. Flagged for Manager Review. No advisor recommendations found."
             email_body = sms_draft
         else:
-            # We check in priority order for safety: Tires > Brakes > Services
+            # Priority formatting check
             if 'Tires' in cat:
                 if "7-Day" in stage_filter:
                     sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just a quick check-in on your {model}! Let us know if you have any questions regarding the tire quote we provided."
