@@ -38,7 +38,7 @@ def get_contacted_ros(_sheet):
 
 contacted_ros = get_contacted_ros(sheet)
 
-# --- UPGRADED DATA PROCESSING (DECLINED WORK) ---
+# --- BULLETPROOF DATA PROCESSING (DECLINED WORK) ---
 def extract_total_amount(text):
     if pd.isna(text) or str(text).strip() == '': return 0.0
     text_str = str(text)
@@ -50,18 +50,16 @@ def extract_total_amount(text):
         except: pass
 
     # 2. BREAKDOWN SCRUBBER: Remove "per item" text strings so they don't get double-counted
-    # e.g., "260.13 ea", "260.13 each", "@ 260.13", "(260.13/ea)"
     text_str = re.sub(r'(?i)\$?[0-9,]+\.\d{2}\s*(?:ea|each|\/ea|per tire)\b', '', text_str)
     text_str = re.sub(r'(?i)\b(?:ea|each|per|@)\s*\$?[0-9,]+\.\d{2}\b', '', text_str)
     
-    # 3. Catch anything with a dollar sign
-    dollar_matches = re.findall(r'\$([0-9,]+(?:\.\d{2})?)', text_str)
-    # 4. Catch standard price formats WITHOUT a dollar sign (ending in two decimals)
-    decimal_matches = re.findall(r'(?<!\$)\b([0-9,]+\.\d{2})\b', text_str)
+    # 3. BULLETPROOF REGEX: Catch prices safely without ghosting numbers
+    matches = re.findall(r'\$?[0-9,]+\.\d{2}', text_str)
     
     amounts = []
-    for match in dollar_matches + decimal_matches:
-        try: amounts.append(float(match.replace(',', '')))
+    for m in matches:
+        clean_val = m.replace('$', '').replace(',', '')
+        try: amounts.append(float(clean_val))
         except: pass
         
     if not amounts: return 0.0
@@ -74,9 +72,15 @@ def extract_total_amount(text):
     # SMART AVERAGE ENGINE: If multiple brands or the word "or" is used, they are giving options.
     if brands_mentioned > 1 or " or " in text_lower:
         amounts.sort(reverse=True)
+        # The number of options is likely the number of brands mentioned (default to 2 if "or" is used)
         num_options = min(max(brands_mentioned, 2), len(amounts))
+        
+        # Take the average of the primary options to create a realistic estimate
         option_estimate = sum(amounts[:num_options]) / num_options
+        
+        # Add any remaining smaller amounts (like a complimentary alignment or wiper blades)
         other_repairs = sum(amounts[num_options:])
+        
         return round(option_estimate + other_repairs, 2)
         
     return round(sum(amounts), 2)
