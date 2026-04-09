@@ -42,9 +42,7 @@ contacted_ros = get_contacted_ros(sheet)
 def extract_total_amount(text):
     if pd.isna(text): return 0.0
     text_str = str(text)
-    # 1. Catch anything with a dollar sign
     dollar_matches = re.findall(r'\$([0-9,]+(?:\.\d{2})?)', text_str)
-    # 2. Catch standard price formats WITHOUT a dollar sign (ending in two decimals)
     decimal_matches = re.findall(r'(?<!\$)\b([0-9,]+\.\d{2})\b', text_str)
     
     total = 0.0
@@ -113,29 +111,31 @@ def process_declined_data(df):
     df.rename(columns=rename_cols, inplace=True)
     return df
 
-# --- DATA PROCESSING (APPROVED WORK) ---
+# --- DATA PROCESSING (APPROVED WORK & MISSED TOTALS) ---
 @st.cache_data
 def process_approved_data(df):
-    # Reynolds naturally creates duplicate columns called Sales, Sales.1, Sales.2. 
-    # This translates them into English.
+    # Map Reynolds columns based on header index (Row O, R, U)
     col_mapping = {
         'Sales': 'Labor Sales',
         'Cost': 'Labor Cost',
-        'GP%': 'Labor GP%',
         'Sales.1': 'Parts Sales',
         'Cost.1': 'Parts Cost',
-        'GP%.1': 'Parts GP%',
         'Sales.2': 'Total Sales',
     }
     rename_dict = {k: v for k, v in col_mapping.items() if k in df.columns}
     df.rename(columns=rename_dict, inplace=True)
     
-    # Ensure they are numeric for math
-    for col in ['Total Sales', 'Labor Sales', 'Parts Sales']:
+    # Target columns for robust numeric parsing
+    currency_columns = [
+        'Total Sales', 'Labor Sales', 'Parts Sales',
+        'Missed Total Sales', 'Missed Labor Sales', 'Missed Parts Sales'
+    ]
+    
+    for col in currency_columns:
         if col in df.columns:
-            if df[col].dtype == object:
-                df[col] = df[col].replace('[\$,]', '', regex=True)
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            # Bulletproof stripping of $ and commas, ensuring absolute numbers
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce').fillna(0)
+            
     return df
 
 # --- SIDEBAR IDENTIFIER ---
@@ -389,20 +389,38 @@ with tab_sales:
         try:
             app_df = process_approved_data(pd.read_csv(approved_file))
             
-            st.subheader("Gross Sales Performance Overview")
-            st.markdown("A high-level view of what was successfully sold and approved.")
+            # 1. APPROVED SALES TOP METRICS
+            st.subheader("✅ Gross Sales Performance Overview")
             
-            # --- TOP METRICS ---
             c1, c2, c3, c4 = st.columns(4)
-            total_sales = app_df['Total Sales'].sum()
+            total_sales = app_df['Total Sales'].sum() if 'Total Sales' in app_df.columns else 0
+            labor_sales = app_df['Labor Sales'].sum() if 'Labor Sales' in app_df.columns else 0
+            parts_sales = app_df['Parts Sales'].sum() if 'Parts Sales' in app_df.columns else 0
+            
+            # Breakdown by Bill Type
             cp_sales = app_df[app_df['Default Bill Type'].str.contains('Customer', na=False, case=False)]['Total Sales'].sum()
             w_sales = app_df[app_df['Default Bill Type'].str.contains('Warranty', na=False, case=False)]['Total Sales'].sum()
             int_sales = app_df[app_df['Default Bill Type'].str.contains('Internal', na=False, case=False)]['Total Sales'].sum()
             
-            c1.metric("Total Overall Sales", f"${total_sales:,.2f}")
+            c1.metric("Total Generated Revenue", f"${total_sales:,.2f}")
             c2.metric("Customer Pay (CP)", f"${cp_sales:,.2f}")
             c3.metric("Warranty Sales", f"${w_sales:,.2f}")
             c4.metric("Internal Sales", f"${int_sales:,.2f}")
+            
+            st.write(f"*(**Breakdown:** Labor: ${labor_sales:,.2f} | Parts: ${parts_sales:,.2f})*")
+            
+            # 2. MISSED OPPORTUNITIES SECTION
+            st.divider()
+            st.subheader("🚨 Missed Opportunities (Declined Work)")
+            
+            m1, m2, m3 = st.columns(3)
+            missed_total = app_df['Missed Total Sales'].sum() if 'Missed Total Sales' in app_df.columns else 0
+            missed_labor = app_df['Missed Labor Sales'].sum() if 'Missed Labor Sales' in app_df.columns else 0
+            missed_parts = app_df['Missed Parts Sales'].sum() if 'Missed Parts Sales' in app_df.columns else 0
+            
+            m1.metric("Total Missed Sales", f"${missed_total:,.2f}")
+            m2.metric("Missed Labor", f"${missed_labor:,.2f}")
+            m3.metric("Missed Parts", f"${missed_parts:,.2f}")
             
             st.divider()
             
@@ -417,20 +435,16 @@ with tab_sales:
             with col_table:
                 st.markdown("### 🏆 Top 15 Revenue Drivers")
                 # Sort by highest Total Sales
-                top_ops = app_df.sort_values(by='Total Sales', ascending=False).head(15)
-                show_cols = ['Operation Code', 'Description', 'Default Bill Type', 'Total Sales']
-                # Add Labor/Parts if they exist
-                if 'Labor Sales' in top_ops.columns: show_cols.append('Labor Sales')
-                if 'Parts Sales' in top_ops.columns: show_cols.append('Parts Sales')
-                
-                # Format to currency
-                format_dict = {col: '${:,.2f}' for col in ['Total Sales', 'Labor Sales', 'Parts Sales'] if col in top_ops.columns}
-                
-                st.dataframe(
-                    top_ops[show_cols].style.format(format_dict),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                if 'Total Sales' in app_df.columns:
+                    top_ops = app_df.sort_values(by='Total Sales', ascending=False).head(15)
+                    show_cols = ['Operation Code', 'Description', 'Default Bill Type', 'Total Sales']
+                    if 'Labor Sales' in top_ops.columns: show_cols.append('Labor Sales')
+                    if 'Parts Sales' in top_ops.columns: show_cols.append('Parts Sales')
+                    
+                    format_dict = {col: '${:,.2f}' for col in ['Total Sales', 'Labor Sales', 'Parts Sales'] if col in top_ops.columns}
+                    st.dataframe(top_ops[show_cols].style.format(format_dict), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Total Sales column missing from data.")
                 
             st.divider()
             
@@ -446,13 +460,9 @@ with tab_sales:
             if search_desc:
                 filtered_app_df = filtered_app_df[filtered_app_df['Description'].str.contains(search_desc, case=False, na=False)]
                 
-            st.dataframe(
-                filtered_app_df.style.format(precision=2),
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(filtered_app_df.style.format(precision=2), use_container_width=True, hide_index=True)
             
         except Exception as e:
-            st.error(f"Error processing Approved Work file. Please ensure it is the raw Reynolds CSV export. Details: {e}")
+            st.error(f"Error processing Approved Work file. Details: {e}")
     else:
         st.info("📈 Upload the 'Approved Work' CSV file in the sidebar to view your sales analytics, top revenue drivers, and total performance.")
