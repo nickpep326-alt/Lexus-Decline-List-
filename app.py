@@ -38,18 +38,45 @@ def get_contacted_ros(_sheet):
 
 contacted_ros = get_contacted_ros(sheet)
 
-# --- DATA PROCESSING (DECLINED WORK) ---
+# --- UPGRADED DATA PROCESSING (DECLINED WORK) ---
 def extract_total_amount(text):
     if pd.isna(text): return 0.0
     text_str = str(text)
+    
+    # 1. Catch anything with a dollar sign
     dollar_matches = re.findall(r'\$([0-9,]+(?:\.\d{2})?)', text_str)
+    # 2. Catch standard price formats WITHOUT a dollar sign (ending in two decimals)
     decimal_matches = re.findall(r'(?<!\$)\b([0-9,]+\.\d{2})\b', text_str)
     
-    total = 0.0
+    amounts = []
     for match in dollar_matches + decimal_matches:
-        try: total += float(match.replace(',', ''))
+        try: amounts.append(float(match.replace(',', '')))
         except: pass
-    return total
+        
+    if not amounts:
+        return 0.0
+        
+    text_lower = text_str.lower()
+    tire_brands = ['michelin', 'goodyear', 'yokohama', 'bridgestone', 'pirelli', 'continental', 'dunlop', 'firestone', 'hankook', 'kumho', 'falken', 'toyo']
+    
+    # Count how many distinct tire brands are mentioned
+    brands_mentioned = sum(1 for brand in tire_brands if brand in text_lower)
+    
+    # SMART AVERAGE ENGINE: If multiple brands or the word "or" is used, they are giving options.
+    if brands_mentioned > 1 or " or " in text_lower:
+        amounts.sort(reverse=True)
+        # The number of options is likely the number of brands mentioned (default to 2 if "or" is used)
+        num_options = min(max(brands_mentioned, 2), len(amounts))
+        
+        # Take the average of the primary options to create a realistic estimate
+        option_estimate = sum(amounts[:num_options]) / num_options
+        
+        # Add any remaining smaller amounts (like a complimentary alignment or wiper blades)
+        other_repairs = sum(amounts[num_options:])
+        
+        return round(option_estimate + other_repairs, 2)
+        
+    return round(sum(amounts), 2)
 
 def categorize_repair(text):
     if pd.isna(text) or str(text).strip() == '': return 'Manager Review'
@@ -114,7 +141,6 @@ def process_declined_data(df):
 # --- DATA PROCESSING (APPROVED WORK & MISSED TOTALS) ---
 @st.cache_data
 def process_approved_data(df):
-    # Map Reynolds columns based on header index (Row O, R, U)
     col_mapping = {
         'Sales': 'Labor Sales',
         'Cost': 'Labor Cost',
@@ -125,7 +151,6 @@ def process_approved_data(df):
     rename_dict = {k: v for k, v in col_mapping.items() if k in df.columns}
     df.rename(columns=rename_dict, inplace=True)
     
-    # Target columns for robust numeric parsing
     currency_columns = [
         'Total Sales', 'Labor Sales', 'Parts Sales',
         'Missed Total Sales', 'Missed Labor Sales', 'Missed Parts Sales'
@@ -133,10 +158,8 @@ def process_approved_data(df):
     
     for col in currency_columns:
         if col in df.columns:
-            # Bulletproof stripping of $ and commas, ensuring absolute numbers
             df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce').fillna(0)
             
-    # Clean the Upsell column to ensure it is numeric for tracking
     if 'Upsell' in df.columns:
         df['Upsell'] = pd.to_numeric(df['Upsell'].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce').fillna(0)
             
