@@ -133,12 +133,12 @@ if uploaded_file:
     st.sidebar.header("Filter Pipeline")
     tier_filter = st.sidebar.selectbox("Dollar Tier", ["All", "Ultra-Ticket (>$5000)", "High-Ticket ($1000-$4999)", "Mid-Ticket ($300-$999)", "Low-Ticket (<$300)", "Unpriced / Zero"])
     
-    # --- UPGRADED MULTI-SELECT CATEGORY FILTER ---
+    # MULTI-SELECT CATEGORY FILTER
     category_options = ["Tires", "Brakes", "Services", "Manager Review", "Other"]
     category_filter = st.sidebar.multiselect(
         "Repair Category (Select one or multiple)", 
         options=category_options,
-        default=category_options  # Starts with all selected
+        default=category_options
     )
     
     advisor_list = ["All"] + sorted(list(df['ADVISOR'].unique()))
@@ -152,14 +152,17 @@ if uploaded_file:
     if tier_filter != "All": 
         filtered_df = filtered_df[filtered_df['Dollar Tier'] == tier_filter]
         
-    # Filter Category (Multi-Select Logic)
+    # STRICT FILTER: Category Match
     if not category_filter:
-        # If they uncheck everything, show an empty list instead of crashing
-        filtered_df = filtered_df.iloc[0:0] 
+        filtered_df = filtered_df.iloc[0:0] # Show nothing if they clear all boxes
     elif len(category_filter) < len(category_options):
-        # Create a search pattern that looks for ANY of the selected categories
-        pattern = '|'.join(category_filter)
-        filtered_df = filtered_df[filtered_df['Category'].str.contains(pattern, case=False, na=False)]
+        def is_strict_match(cat_str):
+            if pd.isna(cat_str): return False
+            row_cats = [c.strip() for c in cat_str.split(',')]
+            # Only return True if EVERY category assigned to the RO is highlighted in the filter box
+            return all(c in category_filter for c in row_cats)
+            
+        filtered_df = filtered_df[filtered_df['Category'].apply(is_strict_match)]
         
     # Filter Advisor
     if advisor_filter != "All": 
@@ -252,7 +255,6 @@ if uploaded_file:
             sms_draft = "⚠️ DO NOT CONTACT. Flagged for Manager Review. No advisor recommendations found."
             email_body = sms_draft
         else:
-            # Priority formatting check
             if 'Tires' in cat:
                 if "7-Day" in stage_filter:
                     sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just a quick check-in on your {model}! Let us know if you have any questions regarding the tire quote we provided."
