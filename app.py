@@ -198,8 +198,16 @@ with tab_outreach:
         df = df[~df['RO Number'].astype(str).isin(contacted_ros)]
         
         st.sidebar.header("Filter Pipeline (Declines)")
-        tier_filter = st.sidebar.selectbox("Dollar Tier", ["All", "Ultra-Ticket (>$5000)", "High-Ticket ($1000-$4999)", "Mid-Ticket ($300-$999)", "Low-Ticket (<$300)", "Unpriced / Zero"])
         
+        # MULTI-SELECT DOLLAR TIER FILTER
+        tier_options = ["Ultra-Ticket (>$5000)", "High-Ticket ($1000-$4999)", "Mid-Ticket ($300-$999)", "Low-Ticket (<$300)", "Unpriced / Zero"]
+        tier_filter = st.sidebar.multiselect(
+            "Dollar Tier (Select one or multiple)", 
+            options=tier_options,
+            default=tier_options
+        )
+        
+        # MULTI-SELECT CATEGORY FILTER
         category_options = ["Tires", "Brakes", "Services", "Manager Review", "Other"]
         category_filter = st.sidebar.multiselect(
             "Repair Category (Select one or multiple)", 
@@ -213,9 +221,13 @@ with tab_outreach:
         
         filtered_df = df.copy()
         
-        if tier_filter != "All": 
-            filtered_df = filtered_df[filtered_df['Dollar Tier'] == tier_filter]
+        # Apply Dollar Tier Multi-Filter
+        if not tier_filter:
+            filtered_df = filtered_df.iloc[0:0] 
+        else:
+            filtered_df = filtered_df[filtered_df['Dollar Tier'].isin(tier_filter)]
             
+        # Apply Category Multi-Filter
         if not category_filter:
             filtered_df = filtered_df.iloc[0:0] 
         elif len(category_filter) < len(category_options):
@@ -471,8 +483,8 @@ with tab_sales:
             
             with u_col2:
                 if 'Upsell' in app_df.columns and total_upsells > 0:
-                    st.markdown("**🔥 Top 5 Most Frequently Upsold Services**")
-                    top_upsells = app_df[app_df['Upsell'] > 0].sort_values(by='Upsell', ascending=False).head(5)
+                    st.markdown("**🔥 Top 10 Most Frequently Upsold Services**")
+                    top_upsells = app_df[app_df['Upsell'] > 0].sort_values(by='Upsell', ascending=False).head(10)
                     st.dataframe(
                         top_upsells[['Operation Code', 'Description', 'Upsell']].style.format({'Upsell': '{:.0f}'}),
                         use_container_width=True,
