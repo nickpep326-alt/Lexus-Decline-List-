@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import time
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
@@ -9,6 +10,10 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(page_title="Lexus CRM & Sales Dashboard", layout="wide")
 st.title("Lexus Service Performance Dashboard")
 st.markdown("Track declined repair follow-ups and monitor approved service sales performance.")
+
+# --- INSTANT SYNC SETUP (Session State) ---
+if 'local_contacted' not in st.session_state:
+    st.session_state['local_contacted'] = []
 
 # --- GOOGLE SHEETS CLOUD DATABASE SETUP ---
 @st.cache_resource
@@ -38,7 +43,10 @@ def get_cloud_data(_sheet):
         return pd.DataFrame()
 
 cloud_df = get_cloud_data(sheet)
-contacted_ros = cloud_df['RO Number'].astype(str).tolist() if not cloud_df.empty and 'RO Number' in cloud_df.columns else []
+cloud_contacted = cloud_df['RO Number'].astype(str).tolist() if not cloud_df.empty and 'RO Number' in cloud_df.columns else []
+
+# Combine cloud logs + instant local logs so the lead disappears instantly
+contacted_ros = list(set(cloud_contacted + st.session_state['local_contacted']))
 
 # --- BULLETPROOF DATA PROCESSING (DECLINED WORK) ---
 def extract_total_amount(text):
@@ -184,7 +192,7 @@ with tab_outreach:
     if declined_file:
         df = process_declined_data(pd.read_csv(declined_file))
         
-        # FILTER OUT CLOUD-CONTACTED LEADS
+        # FILTER OUT ALL CONTACTED LEADS (Cloud + Local)
         df = df[~df['RO Number'].astype(str).isin(contacted_ros)]
         
         st.sidebar.header("Filter Pipeline (Declines)")
@@ -284,18 +292,30 @@ with tab_outreach:
                 if sheet is None:
                     st.warning("⚠️ Google Sheets database not connected yet. Tracking is disabled.")
                 else:
-                    if st.button("✅ Mark as Contacted & Remove from Queue", type="primary", use_container_width=True):
+                    if st.button("✅ Mark as Contacted & Log to Cloud", type="primary", use_container_width=True):
                         if not agent_name:
                             st.error("🚨 Please enter your name in the top left sidebar before marking a lead!")
                         else:
                             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            log_success = False
+                            
                             try:
                                 sheet.append_row([str(customer['RO Number']), customer['Customer Name'], agent_name, timestamp, stage_filter, contact_method])
-                                st.success("Lead securely logged! Refreshing queue...")
-                                st.cache_data.clear()
-                                st.rerun()
+                                log_success = True
                             except Exception as e:
-                                st.error(f"Failed to log: {e}")
+                                st.error(f"Failed to log to cloud: {e}")
+                                
+                            if log_success:
+                                # Instantly hide the customer locally
+                                st.session_state['local_contacted'].append(str(customer['RO Number']))
+                                st.success("✅ Lead securely logged! Refreshing queue...")
+                                
+                                # Pause so user can read success, and Google Sheets can save
+                                time.sleep(1.2) 
+                                
+                                # Force cloud data to refresh on the next run
+                                get_cloud_data.clear()
+                                st.rerun()
             
             if customer['Needs_Recheck']:
                 st.info("ℹ️ **RECHECK ITEM DETECTED:** The technician flagged this to be 'rechecked' rather than replaced immediately. **DO NOT push for a sale today.** Frame this follow-up as a reminder to monitor the item and to get their next regular service scheduled so we can keep an eye on it.")
@@ -539,25 +559,31 @@ with tab_history:
     st.markdown("This tab automatically syncs with the cloud database. It shows every customer that has been contacted by your staff.")
     
     if cloud_df.empty:
-        st.info("No outreach history found yet. As your team logs calls, they will appear here.")
+        st.info("No outreach history found yet. Ensure Row 1 of your Google Sheet has your headers, and start logging calls!")
     else:
         # Provide some filtering for the history log
         h_col1, h_col2 = st.columns(2)
-        agent_filter = h_col1.selectbox("Filter by Agent", ["All"] + sorted(list(cloud_df['Agent Name'].unique())))
-        method_filter = h_col2.selectbox("Filter by Contact Method", ["All"] + (list(cloud_df['Contact Method'].unique()) if 'Contact Method' in cloud_df.columns else []))
+        
+        # CRASH-PROOF DROPDOWNS
+        agent_list = sorted(list(cloud_df['Agent Name'].unique())) if 'Agent Name' in cloud_df.columns else []
+        agent_filter = h_col1.selectbox("Filter by Agent", ["All"] + agent_list)
+        
+        method_list = list(cloud_df['Contact Method'].unique()) if 'Contact Method' in cloud_df.columns else []
+        method_filter = h_col2.selectbox("Filter by Contact Method", ["All"] + method_list)
         
         display_history = cloud_df.copy()
         
-        if agent_filter != "All":
+        if agent_filter != "All" and 'Agent Name' in display_history.columns:
             display_history = display_history[display_history['Agent Name'] == agent_filter]
+            
         if method_filter != "All" and 'Contact Method' in display_history.columns:
             display_history = display_history[display_history['Contact Method'] == method_filter]
             
-        st.dataframe(
-            display_history.sort_values(by="Timestamp", ascending=False),
-            use_container_width=True,
-            hide_index=True
-        )
+        # Safely display and sort the dataframe
+        if 'Timestamp' in display_history.columns:
+            display_history = display_history.sort_values(by="Timestamp", ascending=False)
+            
+        st.dataframe(display_history, use_container_width=True, hide_index=True)
         
         # Quick metrics
         st.markdown("### 📊 Team Performance Snapshot")
