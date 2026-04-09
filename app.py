@@ -14,7 +14,6 @@ st.markdown("Team workspace for BDC, Advisors, and Management to track and follo
 @st.cache_resource
 def init_connection():
     try:
-        # Looks for the secure API key we will set up
         creds = Credentials.from_service_account_info(
             st.secrets["gcp_service_account"],
             scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -28,7 +27,7 @@ def init_connection():
 sheet = init_connection()
 
 # Fetch already contacted ROs from the cloud
-@st.cache_data(ttl=10) # Refreshes every 10 seconds to catch other team members' updates
+@st.cache_data(ttl=10) 
 def get_contacted_ros(_sheet):
     if _sheet is None: return []
     try:
@@ -53,12 +52,23 @@ def categorize_repair(text):
     if pd.isna(text) or str(text).strip() == '': return 'Manager Review'
     text_lower = str(text).lower()
     categories = []
-    if 'tire' in text_lower or 'alignment' in text_lower: categories.append('Tires')
-    if 'brake' in text_lower or 'rotor' in text_lower or 'pad' in text_lower: categories.append('Brakes')
-    if 'service' in text_lower or 'fluid' in text_lower or 'filter' in text_lower or 'maintenance' in text_lower: categories.append('Services')
+    
+    # Expanded Tire Dictionary
+    tire_brands = ['tire', 'alignment', 'michelin', 'goodyear', 'yokohama', 'bridgestone', 'pirelli', 'continental', 'dunlop', 'firestone', 'hankook', 'kumho', 'falken', 'toyo']
+    if any(brand in text_lower for brand in tire_brands): categories.append('Tires')
+    
+    # Expanded Brake Dictionary
+    brake_keywords = ['brake', 'rotor', 'pad', 'caliper', 'resurface', 'shoe']
+    if any(kw in text_lower for kw in brake_keywords): categories.append('Brakes')
+    
+    # Expanded Service Dictionary
+    service_keywords = ['service', 'fluid', 'filter', 'maintenance', 'flush', 'spark plug', 'battery', 'wiper', 'bulb', 'oil', 'synthetic', 'coolant']
+    if any(kw in text_lower for kw in service_keywords): categories.append('Services')
     
     if not categories: return 'Other'
-    return categories[0]
+    
+    # Join multiple categories together (e.g., "Tires, Brakes")
+    return ', '.join(categories)
 
 @st.cache_data
 def process_data(df):
@@ -219,6 +229,7 @@ if uploaded_file:
             sms_draft = "⚠️ DO NOT CONTACT. Flagged for Manager Review. No advisor recommendations found."
             email_body = sms_draft
         else:
+            # We check in priority order for safety: Tires > Brakes > Services
             if 'Tires' in cat:
                 if "7-Day" in stage_filter:
                     sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just a quick check-in on your {model}! Let us know if you have any questions regarding the tire quote we provided."
@@ -282,7 +293,7 @@ if uploaded_file:
 
         # --- DEALER TIRE & DEALERSHIP OBJECTION HANDLING SECTION ---
         st.markdown("---")
-        with st.expander(f"💬 High-Conversion Dealership Rebuttals for {cat}", expanded=True):
+        with st.expander(f"💬 High-Conversion Dealership Rebuttals for: {cat}", expanded=True):
             
             st.markdown("""
             ### 🤝 "I need to talk to my spouse/partner about it."
@@ -299,25 +310,25 @@ if uploaded_file:
             * **The Close:** *"If we provide the loaner so your schedule isn't impacted, what day next week works best to drop it off?"*
             """)
             
-            if cat == 'Tires':
+            if 'Tires' in cat:
                 st.markdown("""
-                ### 🛑 "I'll just wait until winter/bad weather." or "I don't need them right now."
+                ### 🛑 TIRES: "I'll just wait until winter/bad weather." or "I don't need them right now."
                 * **The Rebuttal:** "I hear you, but tires are the only thing touching the road. Even on dry pavement, bald tires drastically increase your stopping distance. Don't wait for a rainy day to find out you don't have enough traction to stop safely."
                 * **The Close:** *"Since your tires are already below safety standards, let's look at getting them replaced so you aren't risking an accident. Should I check our current tire rebates?"*
                 
-                ### 🛑 "I can get them cheaper at Costco / Mavis."
+                ### 🛑 TIRES: "I can get them cheaper at Costco / Mavis."
                 * **The Rebuttal:** "I totally get wanting the best price. That is exactly why we offer a Tire Price Match Guarantee. Make sure they are giving you an 'apples-to-apples' quote—our tires include complimentary 24-month Road Hazard coverage, factory-trained installation, a car wash, and a loaner vehicle."
                 * **The Close:** *"If I can match the price of the tires you found, would you prefer to have our Lexus Master Technicians handle the installation today?"*
                 """)
-            elif cat == 'Brakes':
+            if 'Brakes' in cat:
                 st.markdown("""
-                ### 🛑 "They aren't squeaking or vibrating yet, I'll wait until my next service."
+                ### 🛑 BRAKES: "They aren't squeaking or vibrating yet, I'll wait until my next service."
                 * **The Rebuttal:** "I'm glad you aren't experiencing any noise or steering wheel vibrations yet! Our primary concern right now is your safety. As brake pads get this low, they lose their ability to dissipate heat. This significantly increases your emergency stopping distance, and the excess heat can warp your rotors. Because we strictly follow Lexus safety standards, we do not cut or resurface warped rotors—they must be completely replaced."
                 * **The Close:** *"For your safety and to prevent any performance loss or vibration on the highway, would you like us to get these pads swapped out today?"*
                 """)
-            elif cat == 'Services':
+            if 'Services' in cat or cat == 'Other':
                 st.markdown("""
-                ### 🛑 "I'll just take it to my local independent mechanic."
+                ### 🛑 SERVICES: "I'll just take it to my local independent mechanic."
                 * **The Rebuttal:** "You absolutely have that right. Just keep in mind that doing your maintenance with us ensures your Lexus warranty stays fully intact. Local shops don't have our proprietary diagnostic software, and they cannot perform the open factory safety recall checks we do during every single visit."
                 * **The Close:** *"For the peace of mind knowing it was done to exact factory specs by Master Certified techs, plus the complimentary loaner, doesn't it make sense to keep your Lexus with Lexus?"*
                 """)
