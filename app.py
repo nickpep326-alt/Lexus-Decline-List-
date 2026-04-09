@@ -22,40 +22,37 @@ def init_connection():
         sheet = client.open_by_url(st.secrets["private"]["google_sheet_url"]).sheet1
         return sheet
     except Exception as e:
+        st.error(f"Database Error: {e}") 
         return None
 
 sheet = init_connection()
 
-# Fetch already contacted ROs from the cloud
+# Fetch ALL cloud data to keep teams synced
 @st.cache_data(ttl=10) 
-def get_contacted_ros(_sheet):
-    if _sheet is None: return []
+def get_cloud_data(_sheet):
+    if _sheet is None: return pd.DataFrame()
     try:
         records = _sheet.get_all_records()
-        return [str(row['RO Number']) for row in records if 'RO Number' in row]
+        return pd.DataFrame(records)
     except:
-        return []
+        return pd.DataFrame()
 
-contacted_ros = get_contacted_ros(sheet)
+cloud_df = get_cloud_data(sheet)
+contacted_ros = cloud_df['RO Number'].astype(str).tolist() if not cloud_df.empty and 'RO Number' in cloud_df.columns else []
 
 # --- BULLETPROOF DATA PROCESSING (DECLINED WORK) ---
 def extract_total_amount(text):
     if pd.isna(text) or str(text).strip() == '': return 0.0
     text_str = str(text)
     
-    # 1. EXPLICIT TOTAL OVERRIDE: If the advisor wrote "Total $X", use it immediately.
     explicit_total = re.search(r'(?i)total[\s\-\:\*\$]*([0-9,]+(?:\.\d{2})?)', text_str)
     if explicit_total:
         try: return float(explicit_total.group(1).replace(',', ''))
         except: pass
 
-    # 2. BREAKDOWN SCRUBBER: Remove "per item" text strings so they don't get double-counted
     text_str = re.sub(r'(?i)\$?[0-9,]+(?:\.\d{2})?\s*(?:ea|each|\/ea|per tire)\b', '', text_str)
     text_str = re.sub(r'(?i)\b(?:ea|each|per|@)\s*\$?[0-9,]+(?:\.\d{2})?\b', '', text_str)
     
-    # 3. BULLETPROOF REGEX: 
-    # Match 1: Any number with a $ sign (decimals optional, e.g., $470, $1710)
-    # Match 2: Any number without a $ sign that strictly ends in .XX (prevents grabbing year models like 2018)
     matches = re.findall(r'\$[0-9,]+(?:\.\d{2})?|(?<![\$\d.,])[0-9,]+\.\d{2}\b', text_str)
     
     amounts = []
@@ -71,18 +68,11 @@ def extract_total_amount(text):
     
     brands_mentioned = sum(1 for brand in tire_brands if brand in text_lower)
     
-    # SMART AVERAGE ENGINE: If multiple brands or the word "or" is used, they are giving options.
     if brands_mentioned > 1 or " or " in text_lower:
         amounts.sort(reverse=True)
-        # The number of options is likely the number of brands mentioned (default to 2 if "or" is used)
         num_options = min(max(brands_mentioned, 2), len(amounts))
-        
-        # Take the average of the primary options to create a realistic estimate
         option_estimate = sum(amounts[:num_options]) / num_options
-        
-        # Add any remaining smaller amounts (like a complimentary alignment or wiper blades)
         other_repairs = sum(amounts[num_options:])
-        
         return round(option_estimate + other_repairs, 2)
         
     return round(sum(amounts), 2)
@@ -185,7 +175,7 @@ declined_file = st.sidebar.file_uploader("1️⃣ Upload Declined Repairs (CSV)"
 approved_file = st.sidebar.file_uploader("2️⃣ Upload Approved Work (CSV)", type=['csv'])
 
 # --- TABS SETUP ---
-tab_outreach, tab_sales = st.tabs(["📞 Declined Repair Outreach", "💰 Approved Work & Sales Performance"])
+tab_outreach, tab_sales, tab_history = st.tabs(["📞 Declined Repair Outreach", "💰 Approved Work & Sales", "📋 Outreach History"])
 
 # ==========================================
 # TAB 1: DECLINED REPAIR OUTREACH
@@ -288,6 +278,9 @@ with tab_outreach:
                 
                 st.markdown("---")
                 st.markdown("### ☁️ Lead Tracking")
+                
+                contact_method = st.radio("How did you contact this customer?", ["Phone Call", "Text Message", "Email", "Voicemail"], horizontal=True)
+
                 if sheet is None:
                     st.warning("⚠️ Google Sheets database not connected yet. Tracking is disabled.")
                 else:
@@ -297,7 +290,7 @@ with tab_outreach:
                         else:
                             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             try:
-                                sheet.append_row([str(customer['RO Number']), customer['Customer Name'], agent_name, timestamp, stage_filter])
+                                sheet.append_row([str(customer['RO Number']), customer['Customer Name'], agent_name, timestamp, stage_filter, contact_method])
                                 st.success("Lead securely logged! Refreshing queue...")
                                 st.cache_data.clear()
                                 st.rerun()
@@ -537,3 +530,37 @@ with tab_sales:
             st.error(f"Error processing Approved Work file. Details: {e}")
     else:
         st.info("📈 Upload the 'Approved Work' CSV file in the sidebar to view your sales analytics, top revenue drivers, and total performance.")
+
+# ==========================================
+# TAB 3: OUTREACH HISTORY (TEAM SYNC)
+# ==========================================
+with tab_history:
+    st.subheader("📋 Dealership Outreach Log")
+    st.markdown("This tab automatically syncs with the cloud database. It shows every customer that has been contacted by your staff.")
+    
+    if cloud_df.empty:
+        st.info("No outreach history found yet. As your team logs calls, they will appear here.")
+    else:
+        # Provide some filtering for the history log
+        h_col1, h_col2 = st.columns(2)
+        agent_filter = h_col1.selectbox("Filter by Agent", ["All"] + sorted(list(cloud_df['Agent Name'].unique())))
+        method_filter = h_col2.selectbox("Filter by Contact Method", ["All"] + (list(cloud_df['Contact Method'].unique()) if 'Contact Method' in cloud_df.columns else []))
+        
+        display_history = cloud_df.copy()
+        
+        if agent_filter != "All":
+            display_history = display_history[display_history['Agent Name'] == agent_filter]
+        if method_filter != "All" and 'Contact Method' in display_history.columns:
+            display_history = display_history[display_history['Contact Method'] == method_filter]
+            
+        st.dataframe(
+            display_history.sort_values(by="Timestamp", ascending=False),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Quick metrics
+        st.markdown("### 📊 Team Performance Snapshot")
+        st.write(f"**Total Customers Contacted:** {len(display_history)}")
+        if 'Contact Method' in display_history.columns:
+            st.bar_chart(display_history['Contact Method'].value_counts())
