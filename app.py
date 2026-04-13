@@ -126,6 +126,9 @@ def process_declined_data(df):
         if 'EMAIL-ADDRESS' in df.columns: df['EMAIL'] = df['EMAIL-ADDRESS']
         else: df['EMAIL'] = 'No Email Provided'
     
+    # Standardize blank emails
+    df['EMAIL'] = df['EMAIL'].replace({'Nan': 'No Email Provided', '': 'No Email Provided'}).fillna('No Email Provided')
+    
     def assign_tier(amt):
         if amt >= 5000: return "Ultra-Ticket (>$5000)"
         elif amt >= 1000: return "High-Ticket ($1000-$4999)"
@@ -213,6 +216,9 @@ with tab_outreach:
             default=category_options
         )
         
+        # RECHECK FLAG FILTER
+        recheck_filter = st.sidebar.checkbox("🚩 Show Only 'Recheck' Items", value=False)
+        
         advisor_list = ["All"] + sorted(list(df['ADVISOR'].unique()))
         advisor_filter = st.sidebar.selectbox("Advisor Name (Scroll or Type)", advisor_list)
         stage_filter = st.sidebar.radio("Follow-Up Stage", ["7-Day (Soft Touch)", "30-Day (Check-in)", "60-Day (Offer)", "90-Day (Re-engage/Audit)"])
@@ -239,6 +245,9 @@ with tab_outreach:
                 
         if not filtered_df.empty and advisor_filter != "All": 
             filtered_df = filtered_df[filtered_df['ADVISOR'] == advisor_filter]
+            
+        if not filtered_df.empty and recheck_filter:
+            filtered_df = filtered_df[filtered_df['Needs_Recheck'] == True]
             
         filtered_df = filtered_df.reset_index(drop=True) 
         
@@ -294,7 +303,10 @@ with tab_outreach:
                     st.code(customer['RO Number'], language="text")
                 with copy_col2:
                     st.caption("📧 **Email Address**")
-                    st.code(customer['EMAIL'], language="text")
+                    if customer['EMAIL'] == 'No Email Provided':
+                        st.error("No Email Provided")
+                    else:
+                        st.code(customer['EMAIL'], language="text")
                     st.caption("🚗 **Vehicle Model**")
                     st.code(f"{customer['Year']} {customer['Model']}", language="text")
                     st.caption("🔑 **VIN**")
@@ -304,7 +316,7 @@ with tab_outreach:
                 st.markdown(f"**RO Date:** {customer['RO Date']} <span style='color:#e63946; font-weight:bold;'>({days_ago} days ago)</span>", unsafe_allow_html=True)
                 st.markdown("[🔍 Open National Service History (TIS)](https://one.tis.toyota.com/serviceLane/)")
                 
-            # --- RIGHT COLUMN (VALUATION & TRACKING) ---
+            # --- RIGHT COLUMN (TRACKING) ---
             with c2:
                 # Top Warning Boxes
                 st.error(f"**Declined Value:** ${customer['Declined Work Total']:,.2f}")
@@ -339,10 +351,20 @@ with tab_outreach:
                                 get_cloud_data.clear()
                                 st.rerun()
             
+            # --- NOTIFICATIONS & TEMPLATES ---
+            st.markdown("---")
             if customer['Needs_Recheck']:
                 st.info("ℹ️ **RECHECK ITEM DETECTED:** The technician flagged this to be 'rechecked' rather than replaced immediately. **DO NOT push for a sale today.** Frame this follow-up as a reminder to monitor the item and to get their next regular service scheduled so we can keep an eye on it.")
 
+            if customer['EMAIL'] == 'No Email Provided':
+                st.error("⚠️ **MISSING EMAIL ON FILE:** This customer does not have an email address recorded. Please remember to ask them for their current email address during your follow-up to update our profile!")
+
             st.markdown("### Message Templates")
+            
+            # IDENTITY TOGGLE
+            st.markdown("**(Optional) Send message as:**")
+            sender_choice = st.radio("Sender Identity", ["Original Advisor", "Myself (Agent)"], horizontal=True, label_visibility="collapsed")
+            sender_name = customer['ADVISOR'] if sender_choice == "Original Advisor" else (agent_name if agent_name else "[Your Name]")
             
             name = str(customer['Customer Name']).split()[0] if pd.notna(customer['Customer Name']) else "Valued Client"
             model = str(customer['Model'])
@@ -358,7 +380,7 @@ with tab_outreach:
             else:
                 if 'Tires' in cat:
                     if "7-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just a quick check-in on your {model}! Let us know if you have any questions regarding the tire quote we provided."
+                        sms_draft = f"Hi {name}, this is {sender_name} from Ray Catena Lexus. Just a quick check-in on your {model}! Let us know if you have any questions regarding the tire quote we provided."
                         email_subj = f"Following up on your {model} visit - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nThank you for trusting us with your {model}. I wanted to follow up regarding the tire recommendations we provided last week. Ensuring you have proper tread is critical for safety and performance. Let us know if you'd like to get those scheduled!"
                     elif "30-Day" in stage_filter:
@@ -366,56 +388,58 @@ with tab_outreach:
                         email_subj = f"Safety Reminder: {model} Tires - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nWe noticed you haven't had a chance to replace the tires on your {model} yet. As traction and stopping distance are vital for your safety, we highly recommend getting this taken care of soon."
                     elif "60-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, Ray Catena Lexus here! We'd love to help get the tires sorted on your {model}. Let me know if you are still in the market and I'll see if we have any current tire rebates available!"
+                        sms_draft = f"Hi {name}, {sender_name} from Ray Catena Lexus here! We'd love to help get the tires sorted on your {model}. Let me know if you are still in the market and I'll see if we have any current tire rebates available!"
                         email_subj = f"Special Check on Tires for your {model} - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nWe want to earn your business back on the tire replacement for your {model}. Lexus frequently runs manufacturer rebates on premium tires—please let me know if you are ready to move forward and I will check what specials we can apply."
                     elif "90-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, Ray Catena Lexus checking in! Just updating our records on your {model}. If you already had those tires replaced, let us know! If not, we'd love to see how we can help."
+                        sms_draft = f"Hi {name}, {sender_name} from Ray Catena Lexus checking in! Just updating our records on your {model}. If you already had those tires replaced, let us know! If not, we'd love to see how we can help."
                         email_subj = f"Checking in on your {model} - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nWe certainly don't want to be a bother, but we are currently updating our vehicle service records. It's been about 3 months since we recommended tires for your {model}.\n\nIf you've already had this taken care of elsewhere, please let us know so we can update your vehicle's history! If not, we'd love the opportunity to earn your business back."
 
                 elif 'Brakes' in cat:
                     if "7-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just doing a courtesy check-in on your {model}. Let us know if you have any questions about the brake service quoted during your recent visit!"
+                        sms_draft = f"Hi {name}, this is {sender_name} from Ray Catena Lexus. Just doing a courtesy check-in on your {model}. Let us know if you have any questions about the brake service quoted during your recent visit!"
                         email_subj = f"Following up on your {model} visit - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nI am following up on the brake recommendations from your recent service. Your safety is our top priority, and we want to ensure you have all the information you need. Please reply or call if you'd like to schedule."
                     elif "30-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, from Ray Catena Lexus. A quick safety reminder regarding the brakes on your {model}. Please let us know if you'd like to schedule an appointment to get them taken care of."
+                        sms_draft = f"Hi {name}, {sender_name} from Ray Catena Lexus. A quick safety reminder regarding the brakes on your {model}. Please let us know if you'd like to schedule an appointment to get them taken care of."
                         email_subj = f"Important Safety Notice: {model} Brakes - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nWe wanted to reach out regarding the brake service recommended for your {model}. Delaying brake maintenance can sometimes lead to more costly repairs down the road. We'd love to get you on the schedule."
                     elif "60-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, Ray Catena Lexus here. We want to help ensure your {model} is safe to drive. Is there anything holding you back from completing your recommended brake service that we can assist with?"
+                        sms_draft = f"Hi {name}, {sender_name} from Ray Catena Lexus here. We want to help ensure your {model} is safe to drive. Is there anything holding you back from completing your recommended brake service that we can assist with?"
                         email_subj = f"Let's get your {model} brakes taken care of - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nWe are concerned about the brake wear on your {model}. Is there anything we can do to help facilitate this repair for you? Let us know if we can arrange a loaner vehicle to make the process easier."
                     elif "90-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, Ray Catena Lexus here. We're just updating our service records. Were you able to get the brakes serviced on your {model}? We want to make sure you're driving safely!"
+                        sms_draft = f"Hi {name}, {sender_name} at Ray Catena Lexus here. We're just updating our service records. Were you able to get the brakes serviced on your {model}? We want to make sure you're driving safely!"
                         email_subj = f"Service Audit: Safety update for your {model} - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nI'm reaching out because we are doing a routine safety audit on our recent service visits. We noticed the brake service recommended for your {model} is still pending in our system.\n\nWe don't want to pester you, but since brakes are a critical safety component, we wanted to check if you had this completed elsewhere so we can close out our safety log."
 
                 else:
                     if "7-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, this is {customer['ADVISOR']} from Ray Catena Lexus. Just a quick courtesy follow-up on your {model}. Let us know if you have any questions about the recommended maintenance!"
+                        sms_draft = f"Hi {name}, this is {sender_name} from Ray Catena Lexus. Just a quick courtesy follow-up on your {model}. Let us know if you have any questions about the recommended maintenance!"
                         email_subj = f"Following up on your {model} maintenance - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nI'm checking in to see if you had any questions regarding the factory maintenance we recommended during your visit. We're here to help keep your {model} running perfectly."
                     elif "30-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, from Ray Catena Lexus. A quick reminder about the recommended services for your {model} to ensure it stays in top condition. Let us know if you'd like to schedule!"
+                        sms_draft = f"Hi {name}, {sender_name} from Ray Catena Lexus. A quick reminder about the recommended services for your {model} to ensure it stays in top condition. Let us know if you'd like to schedule!"
                         email_subj = f"Maintenance Reminder for your {model} - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nWe noticed you haven't yet completed the recommended services for your {model}. Staying on top of routine maintenance is the best way to protect your vehicle's longevity and warranty."
                     elif "60-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, Ray Catena Lexus here. We'd love to help get your {model} up to date on its maintenance. Please let me know if there's anything we can do to earn your business back on this visit!"
+                        sms_draft = f"Hi {name}, {sender_name} at Ray Catena Lexus here. We'd love to help get your {model} up to date on its maintenance. Please let me know if there's anything we can do to earn your business back on this visit!"
                         email_subj = f"Update on your {model} maintenance - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nWe want to ensure your {model} continues to deliver the luxury performance you expect. Let us know what we can do to help you get your recommended services completed. We'd be happy to check for any applicable service specials."
                     elif "90-Day" in stage_filter:
-                        sms_draft = f"Hi {name}, from Ray Catena Lexus! Just touching base on your {model}. If you already took care of that recommended maintenance, let us know so we can update your file!"
+                        sms_draft = f"Hi {name}, {sender_name} from Ray Catena Lexus! Just touching base on your {model}. If you already took care of that recommended maintenance, let us know so we can update your file!"
                         email_subj = f"Updating your {model} records - Ray Catena Lexus"
                         email_body = f"Hi {name},\n\nWe know how easily routine maintenance can slip down the to-do list! It's been a few months since your last visit with your {model}.\n\nIf there's anything we can do—like reserving a loaner car or applying a current service special—just let us know. If you've already handled the service, simply reply to let us know so we can update your history!"
 
             col_sms, col_email = st.columns(2)
             with col_sms:
-                st.text_area("📱 Text Message Draft (Copy/Paste to Reynolds)", value=sms_draft, height=250)
+                st.markdown("📱 **Text Message Draft** *(Hover right corner to copy)*")
+                st.code(sms_draft, language="text")
             with col_email:
                 email_combined = f"Subject: {email_subj}\n\n{email_body}"
-                st.text_area("📧 Email Draft", value=email_combined, height=250)
+                st.markdown("📧 **Email Draft** *(Hover right corner to copy)*")
+                st.code(email_combined, language="text")
 
             st.markdown("---")
             with st.expander(f"💬 High-Conversion Dealership Rebuttals for: {cat}", expanded=True):
@@ -463,7 +487,6 @@ with tab_outreach:
                 st.info("👆 Click on any customer row in the table above to open their file and generate follow-up templates.")
 
     else:
-        # BRAND NEW WARNING & INSTRUCTIONS FOR USERS
         if not agent_name:
             st.warning("⚠️ **Action Required:** Please enter your name in the top left sidebar to unlock the tracking tools.")
             
@@ -545,7 +568,6 @@ with tab_sales:
                 
             with col_table:
                 st.markdown("### 🏆 Top 15 Revenue Drivers")
-                # Sort by highest Total Sales
                 if 'Total Sales' in app_df.columns:
                     top_ops = app_df.sort_values(by='Total Sales', ascending=False).head(15)
                     show_cols = ['Operation Code', 'Description', 'Default Bill Type', 'Total Sales']
@@ -588,10 +610,8 @@ with tab_history:
     if cloud_df.empty:
         st.info("No outreach history found yet. Ensure Row 1 of your Google Sheet has your headers, and start logging calls!")
     else:
-        # Provide some filtering for the history log
         h_col1, h_col2, h_col3 = st.columns(3)
         
-        # CRASH-PROOF DROPDOWNS
         agent_list = sorted(list(cloud_df['Agent Name'].unique())) if 'Agent Name' in cloud_df.columns else []
         agent_filter = h_col1.selectbox("Filter by Agent", ["All"] + agent_list)
         
@@ -612,13 +632,11 @@ with tab_history:
         if outcome_filter != "All" and 'Outcome' in display_history.columns:
             display_history = display_history[display_history['Outcome'] == outcome_filter]
             
-        # Safely display and sort the dataframe
         if 'Timestamp' in display_history.columns:
             display_history = display_history.sort_values(by="Timestamp", ascending=False)
             
         st.dataframe(display_history, use_container_width=True, hide_index=True)
         
-        # Quick metrics
         st.markdown("### 📊 Team Performance Snapshot")
         st.write(f"**Total Customers Contacted:** {len(display_history)}")
         if 'Contact Method' in display_history.columns:
