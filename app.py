@@ -48,6 +48,45 @@ cloud_contacted = cloud_df['RO Number'].astype(str).tolist() if not cloud_df.emp
 # Combine cloud logs + instant local logs so the lead disappears instantly
 contacted_ros = list(set(cloud_contacted + st.session_state['local_contacted']))
 
+# --- VEHICLE VALUATION ENGINE ---
+def estimate_lexus_value(year, model_str):
+    if pd.isna(year) or pd.isna(model_str):
+        return 0.0
+        
+    # Baseline MSRP mapping for standard Lexus lineup
+    base_prices = {
+        'LC': 99000, 'LX': 93000, 'LS': 80000, 'GX': 64000, 
+        'TX': 55000, 'RZ': 55000, 'RX': 50000, 'RC': 45000, 
+        'ES': 43000, 'IS': 41000, 'NX': 40000, 'UX': 36000,
+        'GS': 50000, 'CT': 32000 # Discontinued but common
+    }
+    
+    model_upper = str(model_str).upper()
+    base_val = 45000 # Default fallback
+    
+    for key, val in base_prices.items():
+        if key in model_upper:
+            base_val = val
+            break
+            
+    try:
+        veh_year = int(float(year))
+        current_year = datetime.now().year
+        age = max(0, current_year - veh_year)
+        
+        # Standard automotive depreciation curve
+        if age == 0:
+            value = base_val
+        else:
+            value = base_val * 0.85 # ~15% drop in Year 1
+            for _ in range(age - 1):
+                value *= 0.88 # ~12% drop every subsequent year
+                
+        # Absolute floor value for a running Lexus
+        return max(3000.0, round(value, 0))
+    except:
+        return 0.0
+
 # --- BULLETPROOF DATA PROCESSING (DECLINED WORK) ---
 def extract_total_amount(text):
     if pd.isna(text) or str(text).strip() == '': return 0.0
@@ -220,13 +259,11 @@ with tab_outreach:
         filtered_df = df.copy()
         
         # --- FAILSAFE FILTERING LOGIC ---
-        # 1. Tier Filter
         if not tier_filter:
             filtered_df = pd.DataFrame(columns=df.columns)
         else:
             filtered_df = filtered_df[filtered_df['Dollar Tier'].isin(tier_filter)]
             
-        # 2. Category Filter
         if not filtered_df.empty:
             if not category_filter:
                 filtered_df = pd.DataFrame(columns=df.columns)
@@ -236,11 +273,9 @@ with tab_outreach:
                     row_cats = [c.strip() for c in cat_str.split(',')]
                     return all(c in category_filter for c in row_cats)
                 
-                # Use .astype(bool) to prevent pandas empty-series KeyError
                 mask = filtered_df['Category'].apply(is_strict_match).astype(bool)
                 filtered_df = filtered_df[mask]
                 
-        # 3. Advisor Filter
         if not filtered_df.empty and advisor_filter != "All": 
             filtered_df = filtered_df[filtered_df['ADVISOR'] == advisor_filter]
             
@@ -263,7 +298,7 @@ with tab_outreach:
             selected_rows = []
         else:
             display_cols = ['Customer Name', 'Phone Number', 'EMAIL', 'Model', 'Category', 'Declined Work Total', 'Last Serviced']
-            safe_cols = [c for c in display_cols if c in filtered_df.columns] # Extra protection
+            safe_cols = [c for c in display_cols if c in filtered_df.columns]
             
             selection_event = st.dataframe(
                 filtered_df[safe_cols].style.format({'Declined Work Total': '${:,.2f}', 'Last Serviced': '{:.0f} days'}),
@@ -282,23 +317,58 @@ with tab_outreach:
             days_ago = int(customer['Last Serviced']) if pd.notna(customer['Last Serviced']) else "Unknown"
             
             c1, c2 = st.columns([1, 1])
+            
+            # --- LEFT COLUMN (COPY DATA) ---
             with c1:
-                st.write(f"**Name:** {customer['Customer Name']}")
-                st.write(f"**Phone:** {customer['Phone Number']}")
-                st.write(f"**Email:** {customer['EMAIL']}")
-                st.write(f"**Vehicle:** {customer['Year']} {customer['Model']}")
-                st.markdown(f"**RO Date:** {customer['RO Date']} <span style='color:#e63946; font-weight:bold;'>({days_ago} days ago)</span> | RO #: {customer['RO Number']}", unsafe_allow_html=True)
-                st.write(f"**Advisor:** {customer['ADVISOR']}")
+                st.markdown("### 📋 1-Click Copy Information")
+                st.markdown("*(Hover to the right of any box to instantly copy the data)*")
                 
-                st.markdown("---")
-                st.write("**VIN (Hover to right of box to copy):**")
-                st.code(customer['VIN'], language="text")
+                # Stacked Copy Columns for clean formatting
+                copy_col1, copy_col2 = st.columns(2)
+                with copy_col1:
+                    st.caption("👤 **Customer Name**")
+                    st.code(customer['Customer Name'], language="text")
+                    st.caption("📞 **Phone Number**")
+                    st.code(customer['Phone Number'], language="text")
+                    st.caption("📄 **RO Number**")
+                    st.code(customer['RO Number'], language="text")
+                with copy_col2:
+                    st.caption("📧 **Email Address**")
+                    st.code(customer['EMAIL'], language="text")
+                    st.caption("🚗 **Vehicle Model**")
+                    st.code(f"{customer['Year']} {customer['Model']}", language="text")
+                    st.caption("🔑 **VIN**")
+                    st.code(customer['VIN'], language="text")
+                
+                st.write(f"**Original Advisor:** {customer['ADVISOR']}")
+                st.markdown(f"**RO Date:** {customer['RO Date']} <span style='color:#e63946; font-weight:bold;'>({days_ago} days ago)</span>", unsafe_allow_html=True)
                 st.markdown("[🔍 Open Lexus Drivers History Portal](https://drivers.lexus.com/lexusdrivers/history)")
-                st.markdown("---")
                 
+            # --- RIGHT COLUMN (VALUATION & TRACKING) ---
             with c2:
+                # Top Warning Boxes
                 st.error(f"**Declined Value:** ${customer['Declined Work Total']:,.2f}")
                 st.warning(f"**Original Advisor Notes:**\n{customer['Original Notes']}")
+                
+                # --- NEW VEHICLE VALUATION ENGINE ---
+                st.markdown("---")
+                st.markdown("### 🚙 Trade-In & Vehicle Valuation")
+                
+                veh_val = estimate_lexus_value(customer['Year'], customer['Model'])
+                if veh_val > 0:
+                    repair_ratio = (customer['Declined Work Total'] / veh_val) * 100
+                    
+                    val_c1, val_c2, val_c3 = st.columns(3)
+                    val_c1.metric("Est. Vehicle Value", f"${veh_val:,.0f}")
+                    val_c2.metric("Repair Quote", f"${customer['Declined Work Total']:,.0f}")
+                    val_c3.metric("Cost vs. Value", f"{repair_ratio:.1f}%")
+                    
+                    if repair_ratio >= 15.0:
+                        st.success("🎯 **HIGH TRADE-IN POTENTIAL:** The cost of these repairs is a significant percentage of the vehicle's value. This is a prime opportunity to pitch the Vehicle Exchange Program and get them into a new Lexus!")
+                    else:
+                        st.info("The repair cost is low relative to the vehicle's value. Focus on selling the service.")
+                else:
+                    st.info("Vehicle valuation not available for this model/year.")
                 
                 st.markdown("---")
                 st.markdown("### ☁️ Lead Tracking")
@@ -317,21 +387,15 @@ with tab_outreach:
                             log_success = False
                             
                             try:
-                                # Now appending 7 items to the sheet, including outreach_outcome
                                 sheet.append_row([str(customer['RO Number']), customer['Customer Name'], agent_name, timestamp, stage_filter, contact_method, outreach_outcome])
                                 log_success = True
                             except Exception as e:
                                 st.error(f"Failed to log to cloud: {e}")
                                 
                             if log_success:
-                                # Instantly hide the customer locally
                                 st.session_state['local_contacted'].append(str(customer['RO Number']))
                                 st.success("✅ Lead securely logged! Refreshing queue...")
-                                
-                                # Pause so user can read success, and Google Sheets can save
                                 time.sleep(1.2) 
-                                
-                                # Force cloud data to refresh on the next run
                                 get_cloud_data.clear()
                                 st.rerun()
             
@@ -459,8 +523,11 @@ with tab_outreach:
                 st.info("👆 Click on any customer row in the table above to open their file and generate follow-up templates.")
 
     else:
-        # BRAND NEW CLEAR INSTRUCTIONS FOR USERS
-        st.info("👋 Welcome! To get started:\n\n1️⃣ **Enter your name** in the top left sidebar.\n2️⃣ **Upload your 'Declined Repairs' CSV export** using the sidebar on the left.")
+        # BRAND NEW WARNING & INSTRUCTIONS FOR USERS
+        if not agent_name:
+            st.warning("⚠️ **Action Required:** Please enter your name in the top left sidebar to unlock the tracking tools.")
+            
+        st.info("👋 **Welcome to the Lexus Service Performance Dashboard!**\n\nTo get started:\n\n1️⃣ **Enter your name** in the top left sidebar. *(Required to log calls)*\n2️⃣ **Upload your 'Declined Repairs' CSV export** using the sidebar on the left.")
 
 # ==========================================
 # TAB 2: APPROVED WORK & SALES DATA
