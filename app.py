@@ -48,52 +48,6 @@ cloud_contacted = cloud_df['RO Number'].astype(str).tolist() if not cloud_df.emp
 # Combine cloud logs + instant local logs so the lead disappears instantly
 contacted_ros = list(set(cloud_contacted + st.session_state['local_contacted']))
 
-# --- VEHICLE VALUATION ENGINE (PATCHED) ---
-def estimate_lexus_value(year, model_str):
-    if pd.isna(year) or pd.isna(model_str):
-        return 0.0
-        
-    # Baseline MSRP mapping for standard Lexus lineup
-    base_prices = {
-        'LC': 99000, 'LX': 93000, 'LS': 80000, 'GX': 64000, 
-        'TX': 55000, 'RZ': 55000, 'RX': 50000, 'RC': 45000, 
-        'ES': 43000, 'IS': 41000, 'NX': 40000, 'UX': 36000,
-        'GS': 50000, 'CT': 32000 # Discontinued but common
-    }
-    
-    model_upper = str(model_str).upper()
-    base_val = 45000 # Default fallback
-    
-    for key, val in base_prices.items():
-        if key in model_upper:
-            base_val = val
-            break
-            
-    try:
-        # SMART YEAR PARSER: Converts '22' to 2022, '08' to 2008
-        veh_year = int(float(year))
-        if veh_year < 100:
-            if veh_year > 50:
-                veh_year += 1900
-            else:
-                veh_year += 2000
-                
-        current_year = datetime.now().year
-        age = max(0, current_year - veh_year)
-        
-        # AUTOMOTIVE DEPRECIATION CURVE (Assumes 12k miles/yr)
-        if age == 0:
-            value = base_val
-        else:
-            value = base_val * 0.82 # ~18% drop in Year 1 driving off the lot
-            for _ in range(age - 1):
-                value *= 0.88 # ~12% drop every subsequent year
-                
-        # Absolute floor value for a running Lexus
-        return max(3000.0, round(value, 0))
-    except:
-        return 0.0
-
 # --- BULLETPROOF DATA PROCESSING (DECLINED WORK) ---
 def extract_total_amount(text):
     if pd.isna(text) or str(text).strip() == '': return 0.0
@@ -348,33 +302,13 @@ with tab_outreach:
                 
                 st.write(f"**Original Advisor:** {customer['ADVISOR']}")
                 st.markdown(f"**RO Date:** {customer['RO Date']} <span style='color:#e63946; font-weight:bold;'>({days_ago} days ago)</span>", unsafe_allow_html=True)
-                st.markdown("[🔍 Open Lexus Drivers History Portal](https://drivers.lexus.com/lexusdrivers/history)")
+                st.markdown("[🔍 Open National Service History (TIS)](https://one.tis.toyota.com/serviceLane/)")
                 
             # --- RIGHT COLUMN (VALUATION & TRACKING) ---
             with c2:
                 # Top Warning Boxes
                 st.error(f"**Declined Value:** ${customer['Declined Work Total']:,.2f}")
                 st.warning(f"**Original Advisor Notes:**\n{customer['Original Notes']}")
-                
-                # --- PATCHED VEHICLE VALUATION ENGINE ---
-                st.markdown("---")
-                st.markdown("### 🚙 Trade-In & Vehicle Valuation")
-                
-                veh_val = estimate_lexus_value(customer['Year'], customer['Model'])
-                if veh_val > 0:
-                    repair_ratio = (customer['Declined Work Total'] / veh_val) * 100
-                    
-                    val_c1, val_c2, val_c3 = st.columns(3)
-                    val_c1.metric("Est. Vehicle Value", f"${veh_val:,.0f}")
-                    val_c2.metric("Repair Quote", f"${customer['Declined Work Total']:,.0f}")
-                    val_c3.metric("Cost vs. Value", f"{repair_ratio:.1f}%")
-                    
-                    if repair_ratio >= 15.0:
-                        st.success("🎯 **HIGH TRADE-IN POTENTIAL:** The cost of these repairs is a significant percentage of the vehicle's value. This is a prime opportunity to pitch the Vehicle Exchange Program and get them into a new Lexus!")
-                    else:
-                        st.info("The repair cost is low relative to the vehicle's value. Focus on selling the service.")
-                else:
-                    st.info("Vehicle valuation not available for this model/year.")
                 
                 st.markdown("---")
                 st.markdown("### ☁️ Lead Tracking")
