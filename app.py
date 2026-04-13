@@ -125,10 +125,7 @@ def process_declined_data(df):
     if 'EMAIL' not in df.columns:
         if 'EMAIL-ADDRESS' in df.columns: df['EMAIL'] = df['EMAIL-ADDRESS']
         else: df['EMAIL'] = 'No Email Provided'
-    
-    # Standardize blank emails
-    df['EMAIL'] = df['EMAIL'].replace({'Nan': 'No Email Provided', '': 'No Email Provided'}).fillna('No Email Provided')
-    
+        
     def assign_tier(amt):
         if amt >= 5000: return "Ultra-Ticket (>$5000)"
         elif amt >= 1000: return "High-Ticket ($1000-$4999)"
@@ -146,6 +143,16 @@ def process_declined_data(df):
         'RO-DATE': 'RO Date', 'RECID': 'RO Number', 'RO-RECOM': 'Original Notes'
     }
     df.rename(columns=rename_cols, inplace=True)
+    
+    # --- ROBUST BLANK/NONE CHECK FOR EMAILS & PHONES ---
+    df['EMAIL'] = df['EMAIL'].fillna('No Email Provided').astype(str).str.strip()
+    df.loc[df['EMAIL'].str.upper().isin(['NAN', 'NONE', 'N/A', '']), 'EMAIL'] = 'No Email Provided'
+    
+    if 'Phone Number' not in df.columns:
+        df['Phone Number'] = 'No Phone Provided'
+    df['Phone Number'] = df['Phone Number'].fillna('No Phone Provided').astype(str).str.strip()
+    df.loc[df['Phone Number'].str.upper().isin(['NAN', 'NONE', 'N/A', '']), 'Phone Number'] = 'No Phone Provided'
+    
     return df
 
 # --- DATA PROCESSING (APPROVED WORK & MISSED TOTALS) ---
@@ -297,8 +304,13 @@ with tab_outreach:
                 with copy_col1:
                     st.caption("👤 **Customer Name**")
                     st.code(customer['Customer Name'], language="text")
+                    
                     st.caption("📞 **Phone Number**")
-                    st.code(customer['Phone Number'], language="text")
+                    if customer['Phone Number'] == 'No Phone Provided':
+                        st.error("No Phone Provided")
+                    else:
+                        st.code(customer['Phone Number'], language="text")
+                        
                     st.caption("📄 **RO Number**")
                     st.code(customer['RO Number'], language="text")
                 with copy_col2:
@@ -307,6 +319,7 @@ with tab_outreach:
                         st.error("No Email Provided")
                     else:
                         st.code(customer['EMAIL'], language="text")
+                        
                     st.caption("🚗 **Vehicle Model**")
                     st.code(f"{customer['Year']} {customer['Model']}", language="text")
                     st.caption("🔑 **VIN**")
@@ -358,6 +371,9 @@ with tab_outreach:
 
             if customer['EMAIL'] == 'No Email Provided':
                 st.error("⚠️ **MISSING EMAIL ON FILE:** This customer does not have an email address recorded. Please remember to ask them for their current email address during your follow-up to update our profile!")
+                
+            if customer['Phone Number'] == 'No Phone Provided':
+                st.error("⚠️ **MISSING PHONE NUMBER:** This customer does not have a valid phone number recorded. Please remember to ask them for their best contact number during your follow-up!")
 
             st.markdown("### Message Templates")
             
@@ -434,12 +450,10 @@ with tab_outreach:
 
             col_sms, col_email = st.columns(2)
             with col_sms:
-                st.markdown("📱 **Text Message Draft** *(Hover right corner to copy)*")
-                st.code(sms_draft, language="text")
+                st.text_area("📱 Text Message Draft (Copy/Paste to Reynolds)", value=sms_draft, height=250)
             with col_email:
                 email_combined = f"Subject: {email_subj}\n\n{email_body}"
-                st.markdown("📧 **Email Draft** *(Hover right corner to copy)*")
-                st.code(email_combined, language="text")
+                st.text_area("📧 Email Draft", value=email_combined, height=250)
 
             st.markdown("---")
             with st.expander(f"💬 High-Conversion Dealership Rebuttals for: {cat}", expanded=True):
