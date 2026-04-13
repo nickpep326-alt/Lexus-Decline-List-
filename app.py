@@ -48,7 +48,7 @@ cloud_contacted = cloud_df['RO Number'].astype(str).tolist() if not cloud_df.emp
 # Combine cloud logs + instant local logs so the lead disappears instantly
 contacted_ros = list(set(cloud_contacted + st.session_state['local_contacted']))
 
-# --- VEHICLE VALUATION ENGINE ---
+# --- VEHICLE VALUATION ENGINE (PATCHED) ---
 def estimate_lexus_value(year, model_str):
     if pd.isna(year) or pd.isna(model_str):
         return 0.0
@@ -70,15 +70,22 @@ def estimate_lexus_value(year, model_str):
             break
             
     try:
+        # SMART YEAR PARSER: Converts '22' to 2022, '08' to 2008
         veh_year = int(float(year))
+        if veh_year < 100:
+            if veh_year > 50:
+                veh_year += 1900
+            else:
+                veh_year += 2000
+                
         current_year = datetime.now().year
         age = max(0, current_year - veh_year)
         
-        # Standard automotive depreciation curve
+        # AUTOMOTIVE DEPRECIATION CURVE (Assumes 12k miles/yr)
         if age == 0:
             value = base_val
         else:
-            value = base_val * 0.85 # ~15% drop in Year 1
+            value = base_val * 0.82 # ~18% drop in Year 1 driving off the lot
             for _ in range(age - 1):
                 value *= 0.88 # ~12% drop every subsequent year
                 
@@ -323,7 +330,6 @@ with tab_outreach:
                 st.markdown("### 📋 1-Click Copy Information")
                 st.markdown("*(Hover to the right of any box to instantly copy the data)*")
                 
-                # Stacked Copy Columns for clean formatting
                 copy_col1, copy_col2 = st.columns(2)
                 with copy_col1:
                     st.caption("👤 **Customer Name**")
@@ -350,7 +356,7 @@ with tab_outreach:
                 st.error(f"**Declined Value:** ${customer['Declined Work Total']:,.2f}")
                 st.warning(f"**Original Advisor Notes:**\n{customer['Original Notes']}")
                 
-                # --- NEW VEHICLE VALUATION ENGINE ---
+                # --- PATCHED VEHICLE VALUATION ENGINE ---
                 st.markdown("---")
                 st.markdown("### 🚙 Trade-In & Vehicle Valuation")
                 
